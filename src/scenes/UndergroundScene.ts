@@ -202,15 +202,17 @@ export class UndergroundScene extends Scene {
         // 1. On ground level next to other bunkers
         // 2. One level up from ground if above elevator
         if (y === groundLevel) {
-          return this.hasAdjacentBunker(x, y);
+          // Allow building next to other bunkers or above elevator
+          return this.hasAdjacentBunker(x, y) || this.grid[y + 1][x] === 'elevator';
         } else if (y === groundLevel - 1) {
-          return this.grid[y + 1][x] === 'elevator';
+          // One level up, must be above elevator or next to another bunker
+          return this.grid[y + 1][x] === 'elevator' || this.hasAdjacentBunker(x, y);
         }
         return false;
 
       case 'observation':
-        // Observation post can stack up to 3 high
-        if (y < groundLevel - 2) {
+        // Observation post can stack up to 3 high (groundLevel - 2)
+        if (y < groundLevel - 3) {
           return false;
         }
         // Must be above elevator or another observation post
@@ -228,14 +230,14 @@ export class UndergroundScene extends Scene {
   private hasAdjacentBunker(x: number, y: number): boolean {
     const horizontalDirections = [[-1, 0], [1, 0]];
     
-    // Check for horizontal bunker connections or elevator below
+    // Check for horizontal bunker connections
     return horizontalDirections.some(([dx, dy]) => {
       const newX = x + dx;
       if (newX >= 0 && newX < this.grid[0].length) {
         return this.grid[y][newX] === 'bunker';
       }
       return false;
-    }) || this.grid[y + 1][x] === 'elevator';
+    });
   }
 
   private hasHorizontalConnection(x: number, y: number): boolean {
