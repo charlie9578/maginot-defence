@@ -9,6 +9,9 @@ export class UndergroundScene extends Scene {
   private grid: CellContent[][] = [];
   private selectedBuilding: BuildingType | DefenseType = 'foundation';
   private graphics!: Phaser.GameObjects.Graphics;
+  private minZoom: number = 0.5;
+  private maxZoom: number = 2;
+  private currentZoom: number = 1;
 
   private colors: Record<BuildingType | DefenseType, number> = {
     // Underground buildings
@@ -38,6 +41,7 @@ export class UndergroundScene extends Scene {
     this.initializeGrid();
     this.drawGrid();
     this.setupInteraction();
+    this.setupZoomControls();
 
     // Add window resize handler
     this.scale.on('resize', this.handleResize, this);
@@ -75,6 +79,63 @@ export class UndergroundScene extends Scene {
     this.selectedBuilding = type;
   }
 
+  private setupZoomControls() {
+    // Add mouse wheel zoom
+    this.input.on('wheel', (pointer: Phaser.Input.Pointer, gameObjects: any, deltaX: number, deltaY: number) => {
+      // deltaY is positive when scrolling down/away, negative when scrolling up/toward
+      const zoomChange = -deltaY * 0.001; // Adjust this value to change zoom sensitivity
+      this.zoom(zoomChange);
+    });
+
+    // Add keyboard zoom controls
+    this.input.keyboard.on('keydown-PLUS', () => {
+      this.zoom(0.1);
+    });
+
+    this.input.keyboard.on('keydown-MINUS', () => {
+      this.zoom(-0.1);
+    });
+
+    // Add touch pinch-to-zoom
+    this.input.on('pinch', (pinch: any) => {
+      const zoomChange = (pinch.scaleFactor - 1) * 0.1;
+      this.zoom(zoomChange);
+    });
+
+    // Add drag to pan when zoomed
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.isDown && !pointer.wasTouch) {
+        this.cameras.main.scrollX -= pointer.velocity.x / this.currentZoom;
+        this.cameras.main.scrollY -= pointer.velocity.y / this.currentZoom;
+      }
+    });
+  }
+
+  private zoom(change: number) {
+    const newZoom = Phaser.Math.Clamp(
+      this.currentZoom + change,
+      this.minZoom,
+      this.maxZoom
+    );
+    
+    if (newZoom !== this.currentZoom) {
+      // Get pointer position before zoom
+      const pointer = this.input.activePointer;
+      const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      
+      this.currentZoom = newZoom;
+      this.cameras.main.setZoom(this.currentZoom);
+
+      // Adjust camera position to zoom toward pointer
+      const newWorldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      this.cameras.main.scrollX += worldPoint.x - newWorldPoint.x;
+      this.cameras.main.scrollY += worldPoint.y - newWorldPoint.y;
+
+      // Redraw the grid with the new zoom level
+      this.drawGrid();
+    }
+  }
+
   private drawGrid() {
     this.graphics.clear();
     
@@ -85,18 +146,18 @@ export class UndergroundScene extends Scene {
     const groundLevel = Math.floor(rows / 2);
     
     // Center the grid horizontally
-    const offsetX = (this.scale.width - totalWidth) / 2;
+    const offsetX = (this.scale.width / this.currentZoom - totalWidth) / 2;
 
     // Draw sky (top half)
-    this.graphics.fillStyle(0x87CEEB); // Light blue
+    this.graphics.fillStyle(0x87CEEB);
     this.graphics.fillRect(offsetX, 0, totalWidth, groundLevel * this.cellSize);
 
     // Draw ground level (green strip)
-    this.graphics.fillStyle(0x355E3B); // Forest green
+    this.graphics.fillStyle(0x355E3B);
     this.graphics.fillRect(offsetX, groundLevel * this.cellSize, totalWidth, this.cellSize);
 
     // Draw underground (bottom half)
-    this.graphics.fillStyle(0x8B4513); // Saddle brown
+    this.graphics.fillStyle(0x8B4513);
     this.graphics.fillRect(offsetX, (groundLevel + 1) * this.cellSize, totalWidth, (rows - groundLevel - 1) * this.cellSize);
 
     // Draw cells
@@ -115,8 +176,9 @@ export class UndergroundScene extends Scene {
       }
     }
 
-    // Draw grid lines
-    this.graphics.lineStyle(1, 0x333333);
+    // Draw grid lines with adjusted thickness based on zoom
+    const lineThickness = 1 / this.currentZoom;
+    this.graphics.lineStyle(lineThickness, 0x333333);
     
     // Vertical lines
     for (let x = 0; x <= cols; x++) {
@@ -135,9 +197,10 @@ export class UndergroundScene extends Scene {
 
   private setupInteraction() {
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      const offsetX = (this.scale.width - this.grid[0].length * this.cellSize) / 2;
-      const x = Math.floor((pointer.x - offsetX) / this.cellSize);
-      const y = Math.floor(pointer.y / this.cellSize);
+      // Convert screen coordinates to world coordinates
+      const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const x = Math.floor((worldPoint.x - (this.scale.width / this.currentZoom - this.grid[0].length * this.cellSize) / 2) / this.cellSize);
+      const y = Math.floor(worldPoint.y / this.cellSize);
       
       if (this.canBuildAt(x, y)) {
         this.grid[y][x] = this.selectedBuilding;
