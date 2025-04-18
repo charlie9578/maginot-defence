@@ -11,6 +11,7 @@ interface Enemy {
     health: number;
     maxHealth: number;
     speed: number;
+    gridX: number; // Track position in grid coordinates
     x: number;
     y: number;
     healthBar: {
@@ -211,19 +212,6 @@ export class UndergroundScene extends Scene {
   }
 
   private zoom(change: number) {
-    Debug.log('Zoom requested', {
-      category: 'input',
-      data: {
-        currentZoom: this.currentZoom,
-        requestedChange: change,
-        newZoom: Phaser.Math.Clamp(
-          this.currentZoom + change,
-          this.minZoom,
-          this.maxZoom
-        )
-      }
-    });
-
     const newZoom = Phaser.Math.Clamp(
       this.currentZoom + change,
       this.minZoom,
@@ -231,21 +219,56 @@ export class UndergroundScene extends Scene {
     );
     
     if (newZoom !== this.currentZoom) {
-      // Get pointer position before zoom
+      // Store current grid positions of enemies
+      const enemyGridPositions = this.enemies.map(enemy => ({
+        enemy,
+        gridX: enemy.gridX
+      }));
+      
+      // Update zoom
       const pointer = this.input.activePointer;
       const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       
       this.currentZoom = newZoom;
       this.cameras.main.setZoom(this.currentZoom);
 
-      // Adjust camera position to zoom toward pointer
       const newWorldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       this.cameras.main.scrollX += worldPoint.x - newWorldPoint.x;
       this.cameras.main.scrollY += worldPoint.y - newWorldPoint.y;
 
-      // Redraw the grid with the new zoom level
+      // Update enemy positions based on grid positions
+      enemyGridPositions.forEach(({ enemy, gridX }) => {
+        enemy.gridX = gridX;
+        enemy.x = this.gridToWorldX(Math.floor(gridX));
+        enemy.sprite.x = enemy.x;
+        enemy.healthBar.background.x = enemy.x;
+        enemy.healthBar.bar.x = enemy.x;
+      });
+
+      // Redraw the grid
       this.drawGrid();
+
+      Debug.log('Zoom updated', {
+        category: 'system',
+        data: {
+          newZoom,
+          cameraPosition: {
+            x: this.cameras.main.scrollX,
+            y: this.cameras.main.scrollY
+          }
+        }
+      });
     }
+  }
+
+  private worldToGridX(worldX: number): number {
+    const offsetX = (this.scale.width / this.currentZoom - this.grid[0].length * this.cellSize) / 2;
+    return Math.floor((worldX - offsetX) / this.cellSize);
+  }
+
+  private gridToWorldX(gridX: number): number {
+    const offsetX = (this.scale.width / this.currentZoom - this.grid[0].length * this.cellSize) / 2;
+    return offsetX + (gridX * this.cellSize) + (this.cellSize / 2);
   }
 
   private drawGrid() {
@@ -570,17 +593,17 @@ export class UndergroundScene extends Scene {
 
   private spawnEnemy() {
     const groundLevel = Math.floor(this.grid.length / 2);
-    const worldX = 0; // Start from the left side
+    const worldX = this.gridToWorldX(0); // Start at leftmost grid position
     const worldY = groundLevel * this.cellSize + this.cellSize / 2;
-    const health = 50 * this.waveNumber; // Health scales with wave number
+    const health = 50 * this.waveNumber;
     
     Debug.log('Spawning enemy', {
         category: 'enemy',
         data: {
-            position: { x: worldX, y: worldY },
+            gridPosition: { x: 0, y: groundLevel },
+            worldPosition: { x: worldX, y: worldY },
             health: health,
-            wave: this.waveNumber,
-            enemyNumber: this.spawnedEnemiesCount + 1
+            wave: this.waveNumber
         }
     });
 
@@ -588,21 +611,24 @@ export class UndergroundScene extends Scene {
     const enemySprite = this.add.rectangle(
         worldX,
         worldY,
-        30, // Width
-        30, // Height
-        0xff0000 // Red color
+        30,
+        30,
+        0xff0000
     )
     .setDepth(50)
-    .setStrokeStyle(2, 0x000000); // Black border
+    .setScrollFactor(1) // Make sure it scrolls with camera
+    .setStrokeStyle(2, 0x000000);
 
     // Create health bar background
     const healthBarBg = this.add.rectangle(
         worldX,
-        worldY - 20, // Position above enemy
+        worldY - 20,
         32,
         5,
         0x000000
-    ).setDepth(50);
+    )
+    .setDepth(50)
+    .setScrollFactor(1);
 
     // Create health bar
     const healthBar = this.add.rectangle(
@@ -611,7 +637,9 @@ export class UndergroundScene extends Scene {
         32,
         5,
         0x00ff00
-    ).setDepth(51);
+    )
+    .setDepth(51)
+    .setScrollFactor(1);
 
     const enemy: Enemy = {
         sprite: enemySprite,
@@ -621,7 +649,8 @@ export class UndergroundScene extends Scene {
         },
         health: health,
         maxHealth: health,
-        speed: 50, // pixels per second
+        speed: 50,
+        gridX: 0, // Track grid position
         x: worldX,
         y: worldY
     };
@@ -660,9 +689,11 @@ export class UndergroundScene extends Scene {
 
         // Update enemies
         this.enemies.forEach((enemy, index) => {
-            // Move enemy right
-            const moveAmount = enemy.speed * (delta / 1000);
-            enemy.x += moveAmount;
+            // Move enemy in grid coordinates
+            enemy.gridX += (enemy.speed * delta) / (1000 * this.cellSize);
+            
+            // Convert to world coordinates
+            enemy.x = this.gridToWorldX(Math.floor(enemy.gridX));
             enemy.sprite.x = enemy.x;
             
             // Update health bar position
@@ -670,9 +701,21 @@ export class UndergroundScene extends Scene {
             enemy.healthBar.bar.x = enemy.x;
 
             // Remove enemies that reach the right side
-            if (enemy.x >= this.scale.width) {
+            if (enemy.gridX >= this.grid[0].length) {
                 this.destroyEnemy(index);
             }
+
+            Debug.log('Enemy position', {
+                category: 'enemy',
+                level: 'debug',
+                data: {
+                    id: index,
+                    gridX: enemy.gridX,
+                    worldX: enemy.x,
+                    zoom: this.currentZoom,
+                    cameraScroll: this.cameras.main.scrollX
+                }
+            });
         });
 
         // Log wave status periodically
