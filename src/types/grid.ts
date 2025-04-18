@@ -1,6 +1,6 @@
 export type UndergroundType = 'foundation' | 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
-export type SurfaceType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
-export type BuildingType = UndergroundType | SurfaceType;
+export type DefenseType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
+export type BuildingType = UndergroundType | DefenseType;
 
 export const BUILDING_COLORS: Record<BuildingType, number> = {
   // Underground buildings
@@ -16,34 +16,6 @@ export const BUILDING_COLORS: Record<BuildingType, number> = {
   machinegun: 0x696969,  // Dark Gray
   observation: 0xA0522D  // Saddle Brown
 };
-
-export const isSurfaceDefense = (type: BuildingType): type is SurfaceType => {
-  return ['bunker', 'artillery', 'machinegun', 'observation'].includes(type);
-};
-
-export interface GridCell {
-  x: number;
-  y: number;
-  underground: {
-    type: UndergroundType;
-    level: number;
-    connections: Direction[];
-  };
-  surface: {
-    type: SurfaceType;
-    level: number;
-    health: number;
-  };
-}
-
-export type Direction = 'north' | 'south' | 'east' | 'west';
-
-export interface BuildingRequirement {
-  requiredUnderground: UndergroundType[];
-  powerDraw: number;
-  manpowerNeeded: number;
-  ammunitionUsage: number;
-}
 
 export interface BuildingDefinition {
   type: UndergroundType;
@@ -103,4 +75,32 @@ export const BUILDINGS: Record<UndergroundType, BuildingDefinition> = {
     height: 1,
     description: 'Underground passage'
   }
-}; 
+};
+
+export function isSurfaceDefense(type: BuildingType): boolean {
+  return ['bunker', 'artillery', 'machinegun', 'observation'].includes(type);
+}
+
+export interface GridCell {
+  x: number;
+  y: number;
+  underground: {
+    type: UndergroundType;
+    level: number;
+    connections: Direction[];
+  };
+  surface: {
+    type: SurfaceType;
+    level: number;
+    health: number;
+  };
+}
+
+export type Direction = 'north' | 'south' | 'east' | 'west';
+
+export interface BuildingRequirement {
+  requiredUnderground: UndergroundType[];
+  powerDraw: number;
+  manpowerNeeded: number;
+  ammunitionUsage: number;
+} 

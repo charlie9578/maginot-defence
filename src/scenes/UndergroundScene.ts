@@ -1,5 +1,7 @@
 import { Scene } from 'phaser';
 import { BuildingType, BUILDING_COLORS, isSurfaceDefense } from '../types/grid';
+import { Debug } from '../utils/Debug';
+import { BUILDINGS, UndergroundType } from '../types/grid';
 
 type DefenseType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
 type CellContent = BuildingType | DefenseType | null;
@@ -37,11 +39,28 @@ export class UndergroundScene extends Scene {
   }
 
   create() {
+    Debug.log('Scene creation started', { 
+      category: 'system',
+      data: {
+        width: this.scale.width,
+        height: this.scale.height,
+        cellSize: this.cellSize
+      }
+    });
+
     this.graphics = this.add.graphics();
     this.initializeGrid();
     this.drawGrid();
     this.setupInteraction();
     this.setupZoomControls();
+
+    Debug.log('Scene creation completed', { 
+      category: 'system',
+      data: {
+        gridSize: `${this.grid[0].length}x${this.grid.length}`,
+        groundLevel: Math.floor(this.grid.length / 2)
+      }
+    });
 
     // Add window resize handler
     this.scale.on('resize', this.handleResize, this);
@@ -76,7 +95,55 @@ export class UndergroundScene extends Scene {
   }
 
   public setSelectedBuilding(type: BuildingType | DefenseType) {
+    Debug.log('Building type selected', {
+      category: 'building',
+      data: {
+        previousType: this.selectedBuilding,
+        newType: type,
+        buildingInfo: this.getBuildingInfo(type)
+      }
+    });
+    
     this.selectedBuilding = type;
+  }
+
+  private getBuildingInfo(type: BuildingType | DefenseType) {
+    // Check if it's an underground building
+    if (this.isUndergroundBuilding(type)) {
+      return BUILDINGS[type];
+    }
+    
+    // If it's a defense, return defense info
+    return {
+      type: type,
+      name: this.getDefenseName(type as DefenseType),
+      color: this.colors[type].toString(16),
+      description: this.getDefenseDescription(type as DefenseType)
+    };
+  }
+
+  private isUndergroundBuilding(type: BuildingType | DefenseType): type is UndergroundType {
+    return ['foundation', 'ammo', 'barracks', 'command', 'elevator', 'tunnel'].includes(type);
+  }
+
+  private getDefenseName(type: DefenseType): string {
+    const names = {
+      bunker: 'Bunker',
+      artillery: 'Artillery',
+      machinegun: 'Machine Gun',
+      observation: 'Observation Post'
+    };
+    return names[type];
+  }
+
+  private getDefenseDescription(type: DefenseType): string {
+    const descriptions = {
+      bunker: 'Fortified defensive position',
+      artillery: 'Long-range heavy weapon',
+      machinegun: 'Rapid-fire defensive weapon',
+      observation: 'Increases range of nearby defenses'
+    };
+    return descriptions[type];
   }
 
   private setupZoomControls() {
@@ -112,6 +179,19 @@ export class UndergroundScene extends Scene {
   }
 
   private zoom(change: number) {
+    Debug.log('Zoom requested', {
+      category: 'input',
+      data: {
+        currentZoom: this.currentZoom,
+        requestedChange: change,
+        newZoom: Phaser.Math.Clamp(
+          this.currentZoom + change,
+          this.minZoom,
+          this.maxZoom
+        )
+      }
+    });
+
     const newZoom = Phaser.Math.Clamp(
       this.currentZoom + change,
       this.minZoom,
@@ -193,6 +273,19 @@ export class UndergroundScene extends Scene {
     }
 
     this.graphics.strokePath();
+
+    // Add debug visualization for building placement
+    if (this.selectedBuilding) {
+      Debug.log('Grid updated', {
+        category: 'grid',
+        data: {
+          totalBuildings: this.grid.flat().filter(cell => cell !== null).length,
+          buildingTypes: this.getBuildingCounts(),
+          groundLevel: Math.floor(this.grid.length / 2),
+          selectedBuilding: this.getBuildingInfo(this.selectedBuilding)
+        }
+      });
+    }
   }
 
   private setupInteraction() {
@@ -202,11 +295,92 @@ export class UndergroundScene extends Scene {
       const x = Math.floor((worldPoint.x - (this.scale.width / this.currentZoom - this.grid[0].length * this.cellSize) / 2) / this.cellSize);
       const y = Math.floor(worldPoint.y / this.cellSize);
       
+      Debug.log('Attempting to place building', {
+        category: 'building',
+        data: {
+          type: this.selectedBuilding,
+          position: { x, y },
+          worldPosition: { x: worldPoint.x, y: worldPoint.y },
+          gridDimensions: {
+            width: this.grid[0].length,
+            height: this.grid.length
+          },
+          groundLevel: Math.floor(this.grid.length / 2)
+        }
+      });
+
       if (this.canBuildAt(x, y)) {
+        const previousContent = this.grid[y][x];
         this.grid[y][x] = this.selectedBuilding;
+        
+        Debug.log('Building placed successfully', {
+          category: 'building',
+          data: {
+            type: this.selectedBuilding,
+            position: { x, y },
+            replacedContent: previousContent,
+            buildingStats: this.getBuildingInfo(this.selectedBuilding),
+            adjacentCells: {
+              north: y > 0 ? this.grid[y-1][x] : null,
+              south: y < this.grid.length - 1 ? this.grid[y+1][x] : null,
+              east: x < this.grid[0].length - 1 ? this.grid[y][x+1] : null,
+              west: x > 0 ? this.grid[y][x-1] : null
+            }
+          }
+        });
+
         this.drawGrid();
+      } else {
+        Debug.log('Building placement failed', {
+          category: 'building',
+          level: 'warn',
+          data: {
+            type: this.selectedBuilding,
+            position: { x, y },
+            currentCell: this.grid[y]?.[x] || 'out of bounds',
+            reason: this.getBuildFailureReason(x, y)
+          }
+        });
       }
     });
+  }
+
+  private getBuildFailureReason(x: number, y: number): string {
+    // Check bounds
+    if (y < 0 || y >= this.grid.length || x < 0 || x >= this.grid[0].length) {
+      return 'Position out of bounds';
+    }
+
+    const groundLevel = Math.floor(this.grid.length / 2);
+
+    // Check if cell is empty
+    if (this.grid[y][x] !== null) {
+      return 'Cell already occupied';
+    }
+
+    const isDefense = ['bunker', 'artillery', 'machinegun', 'observation'].includes(this.selectedBuilding);
+    
+    if (isDefense) {
+      if (y > groundLevel) {
+        return 'Defense structures must be at or above ground level';
+      }
+      // Add more specific defense placement rules
+      return 'Invalid defense placement';
+    } else {
+      if (y < groundLevel) {
+        return 'Underground buildings must be below ground level';
+      }
+      
+      if (this.selectedBuilding === 'elevator') {
+        if (!this.hasVerticalConnection(x, y) && !this.hasHorizontalConnection(x, y)) {
+          return 'Elevator must connect to other structures';
+        }
+      } else if (!this.hasHorizontalConnection(x, y)) {
+        return 'Building must connect to existing structures';
+      }
+    }
+
+    return 'Unknown reason';
   }
 
   private canBuildAt(x: number, y: number): boolean {
@@ -320,5 +494,23 @@ export class UndergroundScene extends Scene {
       }
       return false;
     });
+  }
+
+  private hasVerticalConnection(x: number, y: number): boolean {
+    const above = y > 0 ? this.grid[y - 1][x] : null;
+    const below = y < this.grid.length - 1 ? this.grid[y + 1][x] : null;
+    return above === 'elevator' || below === 'elevator';
+  }
+
+  private getBuildingCounts(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    this.grid.forEach(row => {
+      row.forEach(cell => {
+        if (cell) {
+          counts[cell] = (counts[cell] || 0) + 1;
+        }
+      });
+    });
+    return counts;
   }
 } 
