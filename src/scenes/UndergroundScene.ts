@@ -6,6 +6,19 @@ import { BUILDINGS, UndergroundType } from '../types/grid';
 type DefenseType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
 type CellContent = BuildingType | DefenseType | null;
 
+interface Enemy {
+    sprite: Phaser.GameObjects.Rectangle;
+    health: number;
+    maxHealth: number;
+    speed: number;
+    x: number;
+    y: number;
+    healthBar: {
+        background: Phaser.GameObjects.Rectangle;
+        bar: Phaser.GameObjects.Rectangle;
+    };
+}
+
 export class UndergroundScene extends Scene {
   private cellSize: number = 48;
   private grid: CellContent[][] = [];
@@ -14,6 +27,13 @@ export class UndergroundScene extends Scene {
   private minZoom: number = 0.5;
   private maxZoom: number = 2;
   private currentZoom: number = 1;
+  private enemies: Enemy[] = [];
+  private isWaveActive: boolean = false;
+  private waveNumber: number = 1;
+  private enemiesPerWave: number = 10;
+  private enemySpawnTimer: number = 0;
+  private enemySpawnDelay: number = 2000; // 2 seconds between spawns
+  private spawnedEnemiesCount: number = 0;
 
   private colors: Record<BuildingType | DefenseType, number> = {
     // Underground buildings
@@ -53,6 +73,18 @@ export class UndergroundScene extends Scene {
     this.drawGrid();
     this.setupInteraction();
     this.setupZoomControls();
+
+    // Add wave start button
+    const startButton = this.add.text(10, 10, 'Start Wave', {
+        backgroundColor: '#00ff00',
+        padding: { x: 10, y: 5 }
+    })
+    .setInteractive()
+    .setDepth(100);
+
+    startButton.on('pointerdown', () => {
+        this.startWave();
+    });
 
     Debug.log('Scene creation completed', { 
       category: 'system',
@@ -512,5 +544,168 @@ export class UndergroundScene extends Scene {
       });
     });
     return counts;
+  }
+
+  private startWave() {
+    Debug.log('Starting wave', {
+        category: 'enemy',
+        data: {
+            waveNumber: this.waveNumber,
+            enemiesPerWave: this.enemiesPerWave
+        }
+    });
+
+    this.isWaveActive = true;
+    this.enemySpawnTimer = 0;
+    this.spawnedEnemiesCount = 0;
+    
+    // Clear any remaining enemies
+    this.enemies.forEach(enemy => {
+        enemy.sprite.destroy();
+        enemy.healthBar.background.destroy();
+        enemy.healthBar.bar.destroy();
+    });
+    this.enemies = [];
+  }
+
+  private spawnEnemy() {
+    const groundLevel = Math.floor(this.grid.length / 2);
+    const worldX = 0; // Start from the left side
+    const worldY = groundLevel * this.cellSize + this.cellSize / 2;
+    const health = 50 * this.waveNumber; // Health scales with wave number
+    
+    Debug.log('Spawning enemy', {
+        category: 'enemy',
+        data: {
+            position: { x: worldX, y: worldY },
+            health: health,
+            wave: this.waveNumber,
+            enemyNumber: this.spawnedEnemiesCount + 1
+        }
+    });
+
+    // Create enemy sprite
+    const enemySprite = this.add.rectangle(
+        worldX,
+        worldY,
+        30, // Width
+        30, // Height
+        0xff0000 // Red color
+    )
+    .setDepth(50)
+    .setStrokeStyle(2, 0x000000); // Black border
+
+    // Create health bar background
+    const healthBarBg = this.add.rectangle(
+        worldX,
+        worldY - 20, // Position above enemy
+        32,
+        5,
+        0x000000
+    ).setDepth(50);
+
+    // Create health bar
+    const healthBar = this.add.rectangle(
+        worldX,
+        worldY - 20,
+        32,
+        5,
+        0x00ff00
+    ).setDepth(51);
+
+    const enemy: Enemy = {
+        sprite: enemySprite,
+        healthBar: {
+            background: healthBarBg,
+            bar: healthBar
+        },
+        health: health,
+        maxHealth: health,
+        speed: 50, // pixels per second
+        x: worldX,
+        y: worldY
+    };
+    
+    this.enemies.push(enemy);
+    this.spawnedEnemiesCount++;
+  }
+
+  private destroyEnemy(index: number) {
+    const enemy = this.enemies[index];
+    
+    Debug.log('Destroying enemy', {
+        category: 'enemy',
+        data: {
+            position: { x: enemy.x, y: enemy.y },
+            remainingHealth: enemy.health,
+            remainingEnemies: this.enemies.length - 1
+        }
+    });
+
+    enemy.sprite.destroy();
+    enemy.healthBar.background.destroy();
+    enemy.healthBar.bar.destroy();
+    this.enemies.splice(index, 1);
+  }
+
+  update(time: number, delta: number) {
+    if (this.isWaveActive) {
+        // Spawn enemies
+        this.enemySpawnTimer += delta;
+        if (this.enemySpawnTimer >= this.enemySpawnDelay && 
+            this.spawnedEnemiesCount < this.enemiesPerWave) {
+            this.spawnEnemy();
+            this.enemySpawnTimer = 0;
+        }
+
+        // Update enemies
+        this.enemies.forEach((enemy, index) => {
+            // Move enemy right
+            const moveAmount = enemy.speed * (delta / 1000);
+            enemy.x += moveAmount;
+            enemy.sprite.x = enemy.x;
+            
+            // Update health bar position
+            enemy.healthBar.background.x = enemy.x;
+            enemy.healthBar.bar.x = enemy.x;
+
+            // Remove enemies that reach the right side
+            if (enemy.x >= this.scale.width) {
+                this.destroyEnemy(index);
+            }
+        });
+
+        // Log wave status periodically
+        if (time % 1000 < 16) { // Log roughly every second
+            Debug.log('Wave status', {
+                category: 'enemy',
+                data: {
+                    waveNumber: this.waveNumber,
+                    activeEnemies: this.enemies.length,
+                    spawned: this.spawnedEnemiesCount,
+                    total: this.enemiesPerWave
+                }
+            });
+        }
+
+        // Check if wave is complete
+        if (this.spawnedEnemiesCount >= this.enemiesPerWave && 
+            this.enemies.length === 0) {
+            this.endWave();
+        }
+    }
+  }
+
+  private endWave() {
+    Debug.log('Wave completed', {
+        category: 'enemy',
+        data: {
+            waveNumber: this.waveNumber,
+            nextWave: this.waveNumber + 1
+        }
+    });
+
+    this.isWaveActive = false;
+    this.waveNumber++;
   }
 } 
