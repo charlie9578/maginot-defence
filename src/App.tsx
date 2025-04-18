@@ -1,36 +1,37 @@
 import React, { useEffect, useState } from 'react';
 import Phaser from 'phaser';
-import { gameConfig } from './config/gameConfig';
 import { UndergroundScene } from './scenes/UndergroundScene';
 import { BuildingSelector } from './components/BuildingSelector';
-import { CellType } from './types/grid';
+
+type BuildingType = 'foundation' | 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
 
 function App() {
-  const [selectedBuilding, setSelectedBuilding] = useState<CellType>('foundation');
+  const [selectedBuilding, setSelectedBuilding] = useState<BuildingType>('foundation');
   const [gameInstance, setGameInstance] = useState<Phaser.Game | null>(null);
 
   useEffect(() => {
     const config = {
-      ...gameConfig,
-      scene: [UndergroundScene],
+      type: Phaser.AUTO,
+      parent: 'game-container',
+      backgroundColor: '#1b1b1b',
       scale: {
         mode: Phaser.Scale.RESIZE,
-        parent: 'game-container',
-        width: '100%',
-        height: '100%',
+        width: window.innerWidth,
+        height: window.innerHeight - 100,
+        autoCenter: Phaser.Scale.CENTER_BOTH
       },
+      physics: {
+        default: 'arcade',
+        arcade: {
+          gravity: { y: 0 },
+          debug: false
+        }
+      },
+      scene: UndergroundScene
     };
 
     const game = new Phaser.Game(config);
     setGameInstance(game);
-
-    // Get the scene and set up communication
-    const scene = game.scene.getScene('UndergroundScene') as UndergroundScene;
-    if (scene) {
-      scene.events.on('ready', () => {
-        scene.setSelectedBuilding(selectedBuilding);
-      });
-    }
 
     return () => {
       game.destroy(true);
@@ -48,7 +49,7 @@ function App() {
 
   return (
     <div className="w-full h-full relative">
-      <div id="game-container" className="w-full" />
+      <div id="game-container" className="w-full h-full bg-gray-900" />
       <BuildingSelector
         selectedBuilding={selectedBuilding}
         onSelectBuilding={setSelectedBuilding}

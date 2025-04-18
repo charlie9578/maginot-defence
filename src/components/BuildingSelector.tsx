@@ -1,12 +1,13 @@
 import React from 'react';
-import { CellType } from '../types/grid';
+
+type BuildingType = 'foundation' | 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
 
 interface BuildingSelectorProps {
-  onSelectBuilding: (type: CellType) => void;
-  selectedBuilding: CellType;
+  onSelectBuilding: (type: BuildingType) => void;
+  selectedBuilding: BuildingType;
 }
 
-const buildings: { type: CellType; name: string; color: string }[] = [
+const buildings: { type: BuildingType; name: string; color: string }[] = [
   { type: 'foundation', name: 'Foundation', color: '#555555' },
   { type: 'ammo', name: 'Ammo Storage', color: '#ff0000' },
   { type: 'barracks', name: 'Barracks', color: '#00ff00' },
@@ -30,14 +31,13 @@ export const BuildingSelector: React.FC<BuildingSelectorProps> = ({
               flex flex-col items-center p-2 rounded
               ${selectedBuilding === type ? 'ring-2 ring-white' : ''}
               hover:bg-gray-700 transition-colors
-              min-w-[80px]
             `}
           >
             <div
               className="w-8 h-8 rounded border border-gray-600"
               style={{ backgroundColor: color }}
             />
-            <span className="text-white text-sm mt-1 whitespace-nowrap">{name}</span>
+            <span className="text-white text-sm mt-1">{name}</span>
           </button>
         ))}
       </div>
