@@ -1,12 +1,31 @@
-export type CellType = 'empty' | 'foundation' | 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
+export type UndergroundType = 'foundation' | 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
+export type SurfaceType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
+export type BuildingType = UndergroundType | SurfaceType;
 
-export type SurfaceType = 'empty' | 'bunker' | 'artillery' | 'machinegun' | 'observation';
+export const BUILDING_COLORS: Record<BuildingType, number> = {
+  // Underground buildings
+  foundation: 0x555555,
+  ammo: 0xff0000,
+  barracks: 0x00ff00,
+  command: 0x0000ff,
+  elevator: 0xffff00,
+  tunnel: 0x888888,
+  // Surface defenses
+  bunker: 0x808080,      // Gray
+  artillery: 0x8B4513,   // Brown
+  machinegun: 0x696969,  // Dark Gray
+  observation: 0xA0522D  // Saddle Brown
+};
+
+export const isSurfaceDefense = (type: BuildingType): type is SurfaceType => {
+  return ['bunker', 'artillery', 'machinegun', 'observation'].includes(type);
+};
 
 export interface GridCell {
   x: number;
   y: number;
   underground: {
-    type: CellType;
+    type: UndergroundType;
     level: number;
     connections: Direction[];
   };
@@ -20,14 +39,14 @@ export interface GridCell {
 export type Direction = 'north' | 'south' | 'east' | 'west';
 
 export interface BuildingRequirement {
-  requiredUnderground: CellType[];
+  requiredUnderground: UndergroundType[];
   powerDraw: number;
   manpowerNeeded: number;
   ammunitionUsage: number;
 }
 
 export interface BuildingDefinition {
-  type: CellType;
+  type: UndergroundType;
   name: string;
   color: string;
   width: number;
@@ -35,15 +54,7 @@ export interface BuildingDefinition {
   description: string;
 }
 
-export const BUILDINGS: Record<CellType, BuildingDefinition> = {
-  empty: {
-    type: 'empty',
-    name: 'Empty',
-    color: '#222222',
-    width: 1,
-    height: 1,
-    description: 'Empty space'
-  },
+export const BUILDINGS: Record<UndergroundType, BuildingDefinition> = {
   foundation: {
     type: 'foundation',
     name: 'Foundation',

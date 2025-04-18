@@ -1,20 +1,28 @@
 import { Scene } from 'phaser';
+import { BuildingType, BUILDING_COLORS, isSurfaceDefense } from '../types/grid';
 
-type BuildingType = 'foundation' | 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
+type DefenseType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
+type CellContent = BuildingType | DefenseType | null;
 
 export class UndergroundScene extends Scene {
   private cellSize: number = 48;
-  private grid: (BuildingType | null)[][] = [];
-  private selectedBuilding: BuildingType = 'foundation';
+  private grid: CellContent[][] = [];
+  private selectedBuilding: BuildingType | DefenseType = 'foundation';
   private graphics!: Phaser.GameObjects.Graphics;
 
-  private colors: Record<BuildingType, number> = {
-    foundation: 0x555555,  // Gray
-    ammo: 0xff0000,       // Red
-    barracks: 0x00ff00,   // Green
-    command: 0x0000ff,    // Blue
-    elevator: 0xffff00,   // Yellow
-    tunnel: 0x888888      // Dark Gray
+  private colors: Record<BuildingType | DefenseType, number> = {
+    // Underground buildings
+    foundation: 0x555555,
+    ammo: 0xff0000,
+    barracks: 0x00ff00,
+    command: 0x0000ff,
+    elevator: 0xffff00,
+    tunnel: 0x888888,
+    // Surface defenses
+    bunker: 0x808080,      // Gray
+    artillery: 0x8B4513,   // Brown
+    machinegun: 0x696969,  // Dark Gray
+    observation: 0xA0522D  // Brown
   };
 
   constructor() {
@@ -63,7 +71,7 @@ export class UndergroundScene extends Scene {
     this.grid[groundLevel][cols - 1] = 'tunnel';
   }
 
-  public setSelectedBuilding(type: BuildingType) {
+  public setSelectedBuilding(type: BuildingType | DefenseType) {
     this.selectedBuilding = type;
   }
 
@@ -146,31 +154,88 @@ export class UndergroundScene extends Scene {
 
     const groundLevel = Math.floor(this.grid.length / 2);
 
-    // Can't build in sky (above ground level)
-    if (y < groundLevel) {
-      return false;
-    }
-
     // Check if cell is empty
     if (this.grid[y][x] !== null) {
       return false;
     }
 
-    // Special rules for elevator
-    if (this.selectedBuilding === 'elevator') {
-      // Check for elevators above or below
-      const cellAbove = y > 0 ? this.grid[y - 1][x] : null;
-      const cellBelow = y < this.grid.length - 1 ? this.grid[y + 1][x] : null;
-      
-      // Can build if there's an elevator above OR below
-      if (cellAbove === 'elevator' || cellBelow === 'elevator') {
-        return true;
+    const isDefense = ['bunker', 'artillery', 'machinegun', 'observation'].includes(this.selectedBuilding);
+    
+    if (isDefense) {
+      return this.canBuildDefense(x, y, this.selectedBuilding as DefenseType);
+    } else {
+      // Underground building rules
+      if (y < groundLevel) {
+        return false;
       }
+
+      if (this.selectedBuilding === 'elevator') {
+        // Check for vertical elevator connections
+        const cellAbove = y > 0 ? this.grid[y - 1][x] : null;
+        const cellBelow = y < this.grid.length - 1 ? this.grid[y + 1][x] : null;
+        const hasVerticalConnection = cellAbove === 'elevator' || cellBelow === 'elevator';
+
+        // If at or below ground level, also allow horizontal connections
+        if (y >= groundLevel) {
+          return hasVerticalConnection || this.hasHorizontalConnection(x, y);
+        }
+        
+        // Above ground, only allow vertical connections
+        return hasVerticalConnection;
+      }
+
+      return this.hasHorizontalConnection(x, y);
+    }
+  }
+
+  private canBuildDefense(x: number, y: number, defenseType: DefenseType): boolean {
+    const groundLevel = Math.floor(this.grid.length / 2);
+
+    // Check if we're at surface level or above
+    if (y > groundLevel) {
+      return false;
     }
 
-    // For all other buildings (and elevators not connecting vertically)
-    // Must have horizontal connection only
-    return this.hasHorizontalConnection(x, y);
+    switch (defenseType) {
+      case 'bunker':
+        // Bunkers can be built:
+        // 1. On ground level next to other bunkers
+        // 2. One level up from ground if above elevator
+        if (y === groundLevel) {
+          return this.hasAdjacentBunker(x, y);
+        } else if (y === groundLevel - 1) {
+          return this.grid[y + 1][x] === 'elevator';
+        }
+        return false;
+
+      case 'observation':
+        // Observation post can stack up to 3 high
+        if (y < groundLevel - 2) {
+          return false;
+        }
+        // Must be above elevator or another observation post
+        const below = this.grid[y + 1][x];
+        return below === 'elevator' || below === 'observation';
+
+      case 'artillery':
+      case 'machinegun':
+        // Can be built on top of bunkers or above elevators
+        const cellBelow = this.grid[y + 1][x];
+        return cellBelow === 'bunker' || cellBelow === 'elevator';
+    }
+  }
+
+  private hasAdjacentBunker(x: number, y: number): boolean {
+    const horizontalDirections = [[-1, 0], [1, 0]];
+    
+    // Check for horizontal bunker connections or elevator below
+    return horizontalDirections.some(([dx, dy]) => {
+      const newX = x + dx;
+      if (newX >= 0 && newX < this.grid[0].length) {
+        return this.grid[y][newX] === 'bunker';
+      }
+      return false;
+    }) || this.grid[y + 1][x] === 'elevator';
   }
 
   private hasHorizontalConnection(x: number, y: number): boolean {
