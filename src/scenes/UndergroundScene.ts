@@ -38,6 +38,8 @@ interface Resources {
     maxTroops: number;
     ammo: number;
     maxAmmo: number;
+    money: number;
+    maxMoney: number;
 }
 
 interface BuildingHealth {
@@ -72,7 +74,9 @@ export class UndergroundScene extends Scene {
     troops: 0,
     maxTroops: 0,
     ammo: 0,
-    maxAmmo: 0
+    maxAmmo: 0,
+    money: 1000,  // Starting money
+    maxMoney: 1000
   };
   private resourceText!: Phaser.GameObjects.Text;
   private defenseProperties: Record<DefenseType, DefenseProperties> = {
@@ -96,6 +100,21 @@ export class UndergroundScene extends Scene {
     artillery: 0x8B4513,   // Brown
     machinegun: 0x696969,  // Dark Gray
     observation: 0xA0522D  // Brown
+  };
+
+  private buildingCosts: Record<BuildingType | DefenseType, number> = {
+    // Underground buildings
+    foundation: 100,
+    ammo: 200,
+    barracks: 300,
+    command: 500,
+    elevator: 150,
+    tunnel: 100,
+    // Surface defenses
+    bunker: 250,
+    artillery: 400,
+    machinegun: 200,
+    observation: 150
   };
 
   constructor() {
@@ -417,23 +436,12 @@ export class UndergroundScene extends Scene {
       const x = Math.floor((worldPoint.x - (this.scale.width / this.currentZoom - this.grid[0].length * this.cellSize) / 2) / this.cellSize);
       const y = Math.floor(worldPoint.y / this.cellSize);
       
-      Debug.log('Attempting to place building', {
-        category: 'building',
-        data: {
-          type: this.selectedBuilding,
-          position: { x, y },
-          worldPosition: { x: worldPoint.x, y: worldPoint.y },
-          gridDimensions: {
-            width: this.grid[0].length,
-            height: this.grid.length
-          },
-          groundLevel: Math.floor(this.grid.length / 2)
-        }
-      });
-
       if (this.canBuildAt(x, y)) {
         const previousContent = this.grid[y][x];
         this.grid[y][x] = this.selectedBuilding;
+        
+        // Deduct building cost
+        this.resources.money -= this.buildingCosts[this.selectedBuilding];
         
         // Create health bar for new building
         this.createBuildingHealth(x, y, this.selectedBuilding);
@@ -443,29 +451,12 @@ export class UndergroundScene extends Scene {
           data: {
             type: this.selectedBuilding,
             position: { x, y },
-            replacedContent: previousContent,
-            buildingStats: this.getBuildingInfo(this.selectedBuilding),
-            adjacentCells: {
-              north: y > 0 ? this.grid[y-1][x] : null,
-              south: y < this.grid.length - 1 ? this.grid[y+1][x] : null,
-              east: x < this.grid[0].length - 1 ? this.grid[y][x+1] : null,
-              west: x > 0 ? this.grid[y][x-1] : null
-            }
+            cost: this.buildingCosts[this.selectedBuilding],
+            remainingMoney: this.resources.money
           }
         });
 
         this.drawGrid();
-      } else {
-        Debug.log('Building placement failed', {
-          category: 'building',
-          level: 'warn',
-          data: {
-            type: this.selectedBuilding,
-            position: { x, y },
-            currentCell: this.grid[y]?.[x] || 'out of bounds',
-            reason: this.getBuildFailureReason(x, y)
-          }
-        });
       }
     });
   }
@@ -518,6 +509,20 @@ export class UndergroundScene extends Scene {
 
     // Check if cell is empty
     if (this.grid[y][x] !== null) {
+      return false;
+    }
+
+    // Check if we have enough money
+    if (this.resources.money < this.buildingCosts[this.selectedBuilding]) {
+      Debug.log('Not enough money to build', {
+        category: 'building',
+        level: 'warn',
+        data: {
+          building: this.selectedBuilding,
+          cost: this.buildingCosts[this.selectedBuilding],
+          available: this.resources.money
+        }
+      });
       return false;
     }
 
@@ -1201,18 +1206,21 @@ export class UndergroundScene extends Scene {
     let barracksCount = 0;
     let ammoCount = 0;
     let defenseCount = 0;
+    let commandCount = 0;
 
     this.grid.forEach(row => {
         row.forEach(cell => {
             if (cell === 'barracks') barracksCount++;
             if (cell === 'ammo') ammoCount++;
             if (cell && this.isDefense(cell)) defenseCount++;
+            if (cell === 'command') commandCount++;
         });
     });
 
     // Update max resources
     this.resources.maxTroops = barracksCount * 10; // Each barracks provides 10 troops
     this.resources.maxAmmo = ammoCount * 50;      // Each ammo depot provides 50 ammo
+    this.resources.maxMoney = 1000 + (commandCount * 500); // Each command center provides 500 money capacity
 
     // Generate resources
     if (this.resources.troops < this.resources.maxTroops) {
@@ -1221,12 +1229,16 @@ export class UndergroundScene extends Scene {
     if (this.resources.ammo < this.resources.maxAmmo) {
         this.resources.ammo = Math.min(this.resources.ammo + ammoCount, this.resources.maxAmmo);
     }
+    if (this.resources.money < this.resources.maxMoney) {
+        this.resources.money = Math.min(this.resources.money + commandCount * 10, this.resources.maxMoney); // Each command center generates 10 money per tick
+    }
 
     // Distribute troops among defenses
     this.distributeTroops();
 
     // Update resource display
     this.resourceText.setText(
+        `Money: $${this.resources.money}/${this.resources.maxMoney}\n` +
         `Troops: ${this.resources.troops}/${this.resources.maxTroops}\n` +
         `Ammo: ${this.resources.ammo}/${this.resources.maxAmmo}`
     );
@@ -1234,12 +1246,15 @@ export class UndergroundScene extends Scene {
     Debug.log('Resources updated', {
         category: 'system',
         data: {
+            money: this.resources.money,
+            maxMoney: this.resources.maxMoney,
             troops: this.resources.troops,
             maxTroops: this.resources.maxTroops,
             ammo: this.resources.ammo,
             maxAmmo: this.resources.maxAmmo,
             barracksCount,
             ammoCount,
+            commandCount,
             defenseCount
         }
     });
