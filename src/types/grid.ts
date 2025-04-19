@@ -1,10 +1,9 @@
-export type UndergroundType = 'foundation' | 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
+export type UndergroundType = 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
 export type DefenseType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
 export type BuildingType = UndergroundType | DefenseType;
 
 export const BUILDING_COLORS: Record<BuildingType, number> = {
   // Underground buildings
-  foundation: 0x555555,
   ammo: 0xff0000,
   barracks: 0x00ff00,
   command: 0x0000ff,
@@ -27,14 +26,6 @@ export interface BuildingDefinition {
 }
 
 export const BUILDINGS: Record<UndergroundType, BuildingDefinition> = {
-  foundation: {
-    type: 'foundation',
-    name: 'Foundation',
-    color: '#555555',
-    width: 2,
-    height: 1,
-    description: 'Basic support structure'
-  },
   ammo: {
     type: 'ammo',
     name: 'Ammo Storage',

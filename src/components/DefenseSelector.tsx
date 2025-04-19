@@ -1,12 +1,12 @@
 import React from 'react';
-import { SurfaceType } from '../types/grid';
+import { DefenseType } from '../types/grid';
 
 interface DefenseSelectorProps {
-  onSelectDefense: (type: SurfaceType) => void;
-  selectedDefense: SurfaceType;
+  onSelectDefense: (type: DefenseType) => void;
+  selectedDefense: DefenseType;
 }
 
-const defenses: { type: SurfaceType; name: string; color: string }[] = [
+const defenses: { type: DefenseType; name: string; color: string }[] = [
   { type: 'bunker', name: 'Bunker', color: '#808080' },
   { type: 'artillery', name: 'Artillery', color: '#8B4513' },
   { type: 'machinegun', name: 'Machine Gun', color: '#696969' },

@@ -58,7 +58,7 @@ export class UndergroundScene extends Scene {
   private cellSize: number = 48;
   private grid: CellContent[][] = [];
   private buildingHealth: (BuildingHealth | null)[][] = [];
-  private selectedBuilding: BuildingType | DefenseType = 'foundation';
+  private selectedBuilding: BuildingType | DefenseType = 'tunnel';
   private graphics!: Phaser.GameObjects.Graphics;
   private minZoom: number = 0.5;
   private maxZoom: number = 2;
@@ -75,8 +75,8 @@ export class UndergroundScene extends Scene {
     maxTroops: 0,
     ammo: 0,
     maxAmmo: 0,
-    money: 1000,  // Starting money
-    maxMoney: 1000
+    money: 5000,  // Increased starting money
+    maxMoney: 5000
   };
   private resourceText!: Phaser.GameObjects.Text;
   private defenseProperties: Record<DefenseType, DefenseProperties> = {
@@ -86,10 +86,11 @@ export class UndergroundScene extends Scene {
     observation: { range: 0, damage: 0, fireRate: 0, lastAttackTime: 0, troopsRequired: 1, ammoPerShot: 0 }
   };
   private attackGraphics: Phaser.GameObjects.Graphics;
+  private killCount: number = 0;
+  private killCountText!: Phaser.GameObjects.Text;
 
   private colors: Record<BuildingType | DefenseType, number> = {
     // Underground buildings
-    foundation: 0x555555,
     ammo: 0xff0000,
     barracks: 0x00ff00,
     command: 0x0000ff,
@@ -104,12 +105,11 @@ export class UndergroundScene extends Scene {
 
   private buildingCosts: Record<BuildingType | DefenseType, number> = {
     // Underground buildings
-    foundation: 100,
     ammo: 200,
     barracks: 300,
     command: 500,
     elevator: 150,
-    tunnel: 100,
+    tunnel: 20,
     // Surface defenses
     bunker: 250,
     artillery: 400,
@@ -143,7 +143,15 @@ export class UndergroundScene extends Scene {
     this.setupZoomControls();
 
     // Add resource display
-    this.resourceText = this.add.text(10, 50, '', {
+    this.resourceText = this.add.text(10, 10, '', {
+        fontSize: '16px',
+        color: '#ffffff',
+        backgroundColor: '#000000',
+        padding: { x: 10, y: 5 }
+    }).setDepth(100);
+
+    // Add kill count display
+    this.killCountText = this.add.text(10, 80, 'Kills: 0', {
         fontSize: '16px',
         color: '#ffffff',
         backgroundColor: '#000000',
@@ -151,7 +159,7 @@ export class UndergroundScene extends Scene {
     }).setDepth(100);
 
     // Add wave start button
-    const startButton = this.add.text(10, 10, 'Start Wave', {
+    const startButton = this.add.text(this.scale.width - 100, 10, 'Start Wave', {
         backgroundColor: '#00ff00',
         padding: { x: 10, y: 5 }
     })
@@ -229,7 +237,11 @@ export class UndergroundScene extends Scene {
   private getBuildingInfo(type: BuildingType | DefenseType) {
     // Check if it's an underground building
     if (this.isUndergroundBuilding(type)) {
-      return BUILDINGS[type];
+      const info = BUILDINGS[type];
+      return {
+        ...info,
+        cost: this.buildingCosts[type]
+      };
     }
     
     // If it's a defense, return defense info
@@ -237,7 +249,8 @@ export class UndergroundScene extends Scene {
       type: type,
       name: this.getDefenseName(type as DefenseType),
       color: this.colors[type].toString(16),
-      description: this.getDefenseDescription(type as DefenseType)
+      description: this.getDefenseDescription(type as DefenseType),
+      cost: this.buildingCosts[type]
     };
   }
 
@@ -754,6 +767,10 @@ export class UndergroundScene extends Scene {
     enemy.healthBar.background.destroy();
     enemy.healthBar.bar.destroy();
     this.enemies.splice(index, 1);
+    
+    // Increment kill count
+    this.killCount++;
+    this.killCountText.setText(`Kills: ${this.killCount}`);
   }
 
   private createBuildingHealth(x: number, y: number, type: BuildingType | DefenseType) {
@@ -1081,9 +1098,9 @@ export class UndergroundScene extends Scene {
     const defenseWorldX = this.gridToWorldX(defenseX);
     const defenseWorldY = defenseY * this.cellSize + this.cellSize / 2;
 
-    // Create projectile
+    // Create projectile with improved visibility
     const projectile = this.add.graphics();
-    projectile.lineStyle(2, 0xff0000, 0.5);
+    projectile.lineStyle(4, 0xff0000, 1); // Thicker, fully opaque line
     
     // Calculate projectile path
     const startX = defenseWorldX;
@@ -1094,14 +1111,20 @@ export class UndergroundScene extends Scene {
     // Draw initial projectile line
     projectile.lineBetween(startX, startY, endX, endY);
     
+    // Add glow effect
+    const glow = this.add.graphics();
+    glow.lineStyle(8, 0xff0000, 0.3);
+    glow.lineBetween(startX, startY, endX, endY);
+    
     // Animate projectile
     const duration = 500; // Slower projectile speed (500ms instead of instant)
     const tween = this.tweens.add({
-      targets: projectile,
+      targets: [projectile, glow],
       alpha: 0,
       duration: duration,
       onComplete: () => {
         projectile.destroy();
+        glow.destroy();
         // Apply damage after projectile hits
         enemy.health -= props.damage;
         
@@ -1240,7 +1263,8 @@ export class UndergroundScene extends Scene {
     this.resourceText.setText(
         `Money: $${this.resources.money}/${this.resources.maxMoney}\n` +
         `Troops: ${this.resources.troops}/${this.resources.maxTroops}\n` +
-        `Ammo: ${this.resources.ammo}/${this.resources.maxAmmo}`
+        `Ammo: ${this.resources.ammo}/${this.resources.maxAmmo}\n` +
+        `Selected: ${this.getBuildingInfo(this.selectedBuilding).name} ($${this.buildingCosts[this.selectedBuilding]})`
     );
 
     Debug.log('Resources updated', {
