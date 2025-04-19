@@ -203,11 +203,11 @@ export class UndergroundScene extends Scene {
     });
 
     // Add keyboard zoom controls
-    this.input.keyboard.on('keydown-PLUS', () => {
+    this.input.keyboard?.on('keydown-PLUS', () => {
       this.zoom(0.1);
     });
 
-    this.input.keyboard.on('keydown-MINUS', () => {
+    this.input.keyboard?.on('keydown-MINUS', () => {
       this.zoom(-0.1);
     });
 
@@ -217,9 +217,9 @@ export class UndergroundScene extends Scene {
       this.zoom(zoomChange);
     });
 
-    // Add drag to pan when zoomed
+    // Add middle mouse button drag to pan
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.isDown && !pointer.wasTouch) {
+      if (pointer.isDown && pointer.button === 1) { // Middle mouse button (button 1)
         this.cameras.main.scrollX -= pointer.velocity.x / this.currentZoom;
         this.cameras.main.scrollY -= pointer.velocity.y / this.currentZoom;
       }
@@ -785,25 +785,44 @@ export class UndergroundScene extends Scene {
     const defenseWorldX = this.gridToWorldX(defenseX);
     const defenseWorldY = defenseY * this.cellSize + this.cellSize / 2;
 
-    // Draw attack line
-    this.attackGraphics.lineStyle(2, 0xff0000, 0.5);
-    this.attackGraphics.lineBetween(defenseWorldX, defenseWorldY, enemy.x, enemy.y);
-
-    // Apply damage
-    enemy.health -= props.damage;
+    // Create projectile
+    const projectile = this.add.graphics();
+    projectile.lineStyle(2, 0xff0000, 0.5);
     
-    // Update health bar
-    const healthPercent = enemy.health / enemy.maxHealth;
-    enemy.healthBar.bar.width = 32 * healthPercent;
-    enemy.healthBar.bar.setFillStyle(healthPercent > 0.5 ? 0x00ff00 : healthPercent > 0.25 ? 0xffff00 : 0xff0000);
+    // Calculate projectile path
+    const startX = defenseWorldX;
+    const startY = defenseWorldY;
+    const endX = enemy.x;
+    const endY = enemy.y;
+    
+    // Draw initial projectile line
+    projectile.lineBetween(startX, startY, endX, endY);
+    
+    // Animate projectile
+    const duration = 500; // Slower projectile speed (500ms instead of instant)
+    const tween = this.tweens.add({
+      targets: projectile,
+      alpha: 0,
+      duration: duration,
+      onComplete: () => {
+        projectile.destroy();
+        // Apply damage after projectile hits
+        enemy.health -= props.damage;
+        
+        // Update health bar
+        const healthPercent = enemy.health / enemy.maxHealth;
+        enemy.healthBar.bar.width = 32 * healthPercent;
+        enemy.healthBar.bar.setFillStyle(healthPercent > 0.5 ? 0x00ff00 : healthPercent > 0.25 ? 0xffff00 : 0xff0000);
 
-    // Check if enemy is destroyed
-    if (enemy.health <= 0) {
-        const index = this.enemies.indexOf(enemy);
-        if (index !== -1) {
-            this.destroyEnemy(index);
+        // Check if enemy is destroyed
+        if (enemy.health <= 0) {
+            const index = this.enemies.indexOf(enemy);
+            if (index !== -1) {
+                this.destroyEnemy(index);
+            }
         }
-    }
+      }
+    });
 
     // Update last attack time
     props.lastAttackTime = time;
