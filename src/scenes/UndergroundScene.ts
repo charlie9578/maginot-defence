@@ -20,6 +20,13 @@ interface Enemy {
     };
 }
 
+interface DefenseProperties {
+    range: number;      // Attack range in grid cells
+    damage: number;     // Damage per hit
+    fireRate: number;   // Time between attacks in milliseconds
+    lastAttackTime: number;
+}
+
 export class UndergroundScene extends Scene {
   private cellSize: number = 48;
   private grid: CellContent[][] = [];
@@ -35,6 +42,13 @@ export class UndergroundScene extends Scene {
   private enemySpawnTimer: number = 0;
   private enemySpawnDelay: number = 2000; // 2 seconds between spawns
   private spawnedEnemiesCount: number = 0;
+  private defenseProperties: Record<DefenseType, DefenseProperties> = {
+    bunker: { range: 3, damage: 10, fireRate: 1000, lastAttackTime: 0 },
+    artillery: { range: 5, damage: 30, fireRate: 2000, lastAttackTime: 0 },
+    machinegun: { range: 4, damage: 5, fireRate: 500, lastAttackTime: 0 },
+    observation: { range: 0, damage: 0, fireRate: 0, lastAttackTime: 0 }
+  };
+  private attackGraphics: Phaser.GameObjects.Graphics;
 
   private colors: Record<BuildingType | DefenseType, number> = {
     // Underground buildings
@@ -70,6 +84,7 @@ export class UndergroundScene extends Scene {
     });
 
     this.graphics = this.add.graphics();
+    this.attackGraphics = this.add.graphics();
     this.initializeGrid();
     this.drawGrid();
     this.setupInteraction();
@@ -687,7 +702,7 @@ export class UndergroundScene extends Scene {
             this.enemySpawnTimer = 0;
         }
 
-        // Update enemies
+        // Update enemies and handle defense attacks
         this.enemies.forEach((enemy, index) => {
             // Move enemy in grid coordinates
             enemy.gridX += (enemy.speed * delta) / (1000 * this.cellSize);
@@ -704,19 +719,10 @@ export class UndergroundScene extends Scene {
             if (enemy.gridX >= this.grid[0].length) {
                 this.destroyEnemy(index);
             }
-
-            Debug.log('Enemy position', {
-                category: 'enemy',
-                level: 'debug',
-                data: {
-                    id: index,
-                    gridX: enemy.gridX,
-                    worldX: enemy.x,
-                    zoom: this.currentZoom,
-                    cameraScroll: this.cameras.main.scrollX
-                }
-            });
         });
+
+        // Handle defense attacks
+        this.handleDefenseAttacks(time);
 
         // Log wave status periodically
         if (time % 1000 < 16) { // Log roughly every second
@@ -730,13 +736,91 @@ export class UndergroundScene extends Scene {
                 }
             });
         }
+    }
+  }
 
-        // Check if wave is complete
-        if (this.spawnedEnemiesCount >= this.enemiesPerWave && 
-            this.enemies.length === 0) {
-            this.endWave();
+  private handleDefenseAttacks(time: number) {
+    const groundLevel = Math.floor(this.grid.length / 2);
+    
+    // Clear previous attack graphics
+    this.attackGraphics.clear();
+
+    // Check each defense in the grid
+    for (let y = 0; y <= groundLevel; y++) {
+        for (let x = 0; x < this.grid[0].length; x++) {
+            const cell = this.grid[y][x];
+            if (cell && this.isDefense(cell)) {
+                const defenseType = cell as DefenseType;
+                const props = this.defenseProperties[defenseType];
+                
+                // Skip observation posts as they don't attack
+                if (defenseType === 'observation') continue;
+
+                // Check if enough time has passed since last attack
+                if (time - props.lastAttackTime >= props.fireRate) {
+                    // Find closest enemy in range
+                    let closestEnemy: Enemy | null = null;
+                    let closestDistance = props.range;
+
+                    this.enemies.forEach(enemy => {
+                        const distance = Math.abs(enemy.gridX - x);
+                        if (distance <= props.range && (!closestEnemy || distance < closestDistance)) {
+                            closestEnemy = enemy;
+                            closestDistance = distance;
+                        }
+                    });
+
+                    // Attack if enemy found
+                    if (closestEnemy) {
+                        this.attackEnemy(defenseType, x, y, closestEnemy, time);
+                    }
+                }
+            }
         }
     }
+  }
+
+  private attackEnemy(defenseType: DefenseType, defenseX: number, defenseY: number, enemy: Enemy, time: number) {
+    const props = this.defenseProperties[defenseType];
+    const defenseWorldX = this.gridToWorldX(defenseX);
+    const defenseWorldY = defenseY * this.cellSize + this.cellSize / 2;
+
+    // Draw attack line
+    this.attackGraphics.lineStyle(2, 0xff0000, 0.5);
+    this.attackGraphics.lineBetween(defenseWorldX, defenseWorldY, enemy.x, enemy.y);
+
+    // Apply damage
+    enemy.health -= props.damage;
+    
+    // Update health bar
+    const healthPercent = enemy.health / enemy.maxHealth;
+    enemy.healthBar.bar.width = 32 * healthPercent;
+    enemy.healthBar.bar.setFillStyle(healthPercent > 0.5 ? 0x00ff00 : healthPercent > 0.25 ? 0xffff00 : 0xff0000);
+
+    // Check if enemy is destroyed
+    if (enemy.health <= 0) {
+        const index = this.enemies.indexOf(enemy);
+        if (index !== -1) {
+            this.destroyEnemy(index);
+        }
+    }
+
+    // Update last attack time
+    props.lastAttackTime = time;
+
+    Debug.log('Defense attack', {
+        category: 'combat',
+        data: {
+            defenseType,
+            position: { x: defenseX, y: defenseY },
+            enemyHealth: enemy.health,
+            damage: props.damage
+        }
+    });
+  }
+
+  private isDefense(type: BuildingType | DefenseType): type is DefenseType {
+    return ['bunker', 'artillery', 'machinegun', 'observation'].includes(type);
   }
 
   private endWave() {
