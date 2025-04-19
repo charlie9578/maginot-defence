@@ -25,6 +25,15 @@ interface DefenseProperties {
     damage: number;     // Damage per hit
     fireRate: number;   // Time between attacks in milliseconds
     lastAttackTime: number;
+    troopsRequired: number;  // Number of troops needed to operate
+    ammoPerShot: number;    // Amount of ammo consumed per shot
+}
+
+interface Resources {
+    troops: number;
+    maxTroops: number;
+    ammo: number;
+    maxAmmo: number;
 }
 
 export class UndergroundScene extends Scene {
@@ -42,11 +51,18 @@ export class UndergroundScene extends Scene {
   private enemySpawnTimer: number = 0;
   private enemySpawnDelay: number = 2000; // 2 seconds between spawns
   private spawnedEnemiesCount: number = 0;
+  private resources: Resources = {
+    troops: 0,
+    maxTroops: 0,
+    ammo: 0,
+    maxAmmo: 0
+  };
+  private resourceText!: Phaser.GameObjects.Text;
   private defenseProperties: Record<DefenseType, DefenseProperties> = {
-    bunker: { range: 3, damage: 10, fireRate: 1000, lastAttackTime: 0 },
-    artillery: { range: 5, damage: 30, fireRate: 2000, lastAttackTime: 0 },
-    machinegun: { range: 4, damage: 5, fireRate: 500, lastAttackTime: 0 },
-    observation: { range: 0, damage: 0, fireRate: 0, lastAttackTime: 0 }
+    bunker: { range: 3, damage: 10, fireRate: 1000, lastAttackTime: 0, troopsRequired: 2, ammoPerShot: 1 },
+    artillery: { range: 5, damage: 30, fireRate: 2000, lastAttackTime: 0, troopsRequired: 4, ammoPerShot: 3 },
+    machinegun: { range: 4, damage: 5, fireRate: 500, lastAttackTime: 0, troopsRequired: 1, ammoPerShot: 1 },
+    observation: { range: 0, damage: 0, fireRate: 0, lastAttackTime: 0, troopsRequired: 1, ammoPerShot: 0 }
   };
   private attackGraphics: Phaser.GameObjects.Graphics;
 
@@ -90,6 +106,14 @@ export class UndergroundScene extends Scene {
     this.setupInteraction();
     this.setupZoomControls();
 
+    // Add resource display
+    this.resourceText = this.add.text(10, 50, '', {
+        fontSize: '16px',
+        color: '#ffffff',
+        backgroundColor: '#000000',
+        padding: { x: 10, y: 5 }
+    }).setDepth(100);
+
     // Add wave start button
     const startButton = this.add.text(10, 10, 'Start Wave', {
         backgroundColor: '#00ff00',
@@ -100,6 +124,14 @@ export class UndergroundScene extends Scene {
 
     startButton.on('pointerdown', () => {
         this.startWave();
+    });
+
+    // Start resource generation
+    this.time.addEvent({
+        delay: 1000,
+        callback: this.updateResources,
+        callbackScope: this,
+        loop: true
     });
 
     Debug.log('Scene creation completed', { 
@@ -739,11 +771,80 @@ export class UndergroundScene extends Scene {
     }
   }
 
+  private updateResources() {
+    // Count resource buildings
+    let barracksCount = 0;
+    let ammoCount = 0;
+    let defenseCount = 0;
+
+    this.grid.forEach(row => {
+        row.forEach(cell => {
+            if (cell === 'barracks') barracksCount++;
+            if (cell === 'ammo') ammoCount++;
+            if (cell && this.isDefense(cell)) defenseCount++;
+        });
+    });
+
+    // Update max resources
+    this.resources.maxTroops = barracksCount * 10; // Each barracks provides 10 troops
+    this.resources.maxAmmo = ammoCount * 50;      // Each ammo depot provides 50 ammo
+
+    // Generate resources
+    if (this.resources.troops < this.resources.maxTroops) {
+        this.resources.troops = Math.min(this.resources.troops + barracksCount, this.resources.maxTroops);
+    }
+    if (this.resources.ammo < this.resources.maxAmmo) {
+        this.resources.ammo = Math.min(this.resources.ammo + ammoCount, this.resources.maxAmmo);
+    }
+
+    // Update resource display
+    this.resourceText.setText(
+        `Troops: ${this.resources.troops}/${this.resources.maxTroops}\n` +
+        `Ammo: ${this.resources.ammo}/${this.resources.maxAmmo}`
+    );
+
+    Debug.log('Resources updated', {
+        category: 'system',
+        data: {
+            troops: this.resources.troops,
+            maxTroops: this.resources.maxTroops,
+            ammo: this.resources.ammo,
+            maxAmmo: this.resources.maxAmmo,
+            barracksCount,
+            ammoCount,
+            defenseCount
+        }
+    });
+  }
+
   private handleDefenseAttacks(time: number) {
     const groundLevel = Math.floor(this.grid.length / 2);
     
     // Clear previous attack graphics
     this.attackGraphics.clear();
+
+    // Calculate total troops required by all defenses
+    let totalTroopsRequired = 0;
+    this.grid.forEach(row => {
+        row.forEach(cell => {
+            if (cell && this.isDefense(cell)) {
+                totalTroopsRequired += this.defenseProperties[cell as DefenseType].troopsRequired;
+            }
+        });
+    });
+
+    // Check if we have enough troops
+    if (totalTroopsRequired > this.resources.troops) {
+        Debug.log('Not enough troops to man all defenses', {
+            category: 'combat',
+            level: 'warn',
+            data: {
+                required: totalTroopsRequired,
+                available: this.resources.troops
+            }
+        });
+        return;
+    }
 
     // Check each defense in the grid
     for (let y = 0; y <= groundLevel; y++) {
@@ -755,6 +856,20 @@ export class UndergroundScene extends Scene {
                 
                 // Skip observation posts as they don't attack
                 if (defenseType === 'observation') continue;
+
+                // Check if we have enough ammo
+                if (this.resources.ammo < props.ammoPerShot) {
+                    Debug.log('Not enough ammo for defense', {
+                        category: 'combat',
+                        level: 'warn',
+                        data: {
+                            defenseType,
+                            ammoRequired: props.ammoPerShot,
+                            ammoAvailable: this.resources.ammo
+                        }
+                    });
+                    continue;
+                }
 
                 // Check if enough time has passed since last attack
                 if (time - props.lastAttackTime >= props.fireRate) {
@@ -773,6 +888,8 @@ export class UndergroundScene extends Scene {
                     // Attack if enemy found
                     if (closestEnemy) {
                         this.attackEnemy(defenseType, x, y, closestEnemy, time);
+                        // Consume ammo
+                        this.resources.ammo -= props.ammoPerShot;
                     }
                 }
             }
