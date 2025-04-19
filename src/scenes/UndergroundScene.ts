@@ -18,6 +18,10 @@ interface Enemy {
         background: Phaser.GameObjects.Rectangle;
         bar: Phaser.GameObjects.Rectangle;
     };
+    damage: number;     // Damage dealt to buildings
+    attackRange: number; // Range at which enemy can attack buildings
+    lastAttackTime: number;
+    attackCooldown: number;
 }
 
 interface DefenseProperties {
@@ -36,9 +40,22 @@ interface Resources {
     maxAmmo: number;
 }
 
+interface BuildingHealth {
+    health: number;
+    maxHealth: number;
+    healthBar: {
+        background: Phaser.GameObjects.Rectangle;
+        bar: Phaser.GameObjects.Rectangle;
+    };
+    troopText?: Phaser.GameObjects.Text;
+    healthText?: Phaser.GameObjects.Text;
+    mannedTroops?: number;  // Track how many troops are assigned to this defense
+}
+
 export class UndergroundScene extends Scene {
   private cellSize: number = 48;
   private grid: CellContent[][] = [];
+  private buildingHealth: (BuildingHealth | null)[][] = [];
   private selectedBuilding: BuildingType | DefenseType = 'foundation';
   private graphics!: Phaser.GameObjects.Graphics;
   private minZoom: number = 0.5;
@@ -153,21 +170,24 @@ export class UndergroundScene extends Scene {
 
   private initializeGrid() {
     const cols = Math.floor(this.scale.width / this.cellSize);
-    const rows = Math.floor((this.scale.height - 100) / this.cellSize); // Account for UI space
+    const rows = Math.floor((this.scale.height - 100) / this.cellSize);
     
     // Create new grid or resize existing
     const newGrid = Array(rows).fill(null).map(() => Array(cols).fill(null));
+    const newBuildingHealth = Array(rows).fill(null).map(() => Array(cols).fill(null));
     
     // Copy existing grid data if it exists
     if (this.grid.length > 0) {
       for (let y = 0; y < Math.min(rows, this.grid.length); y++) {
         for (let x = 0; x < Math.min(cols, this.grid[0].length); x++) {
           newGrid[y][x] = this.grid[y][x];
+          newBuildingHealth[y][x] = this.buildingHealth[y][x];
         }
       }
     }
     
     this.grid = newGrid;
+    this.buildingHealth = newBuildingHealth;
 
     // Add tunnel entrance at the right side of ground level
     const groundLevel = Math.floor(rows / 2);
@@ -415,6 +435,9 @@ export class UndergroundScene extends Scene {
         const previousContent = this.grid[y][x];
         this.grid[y][x] = this.selectedBuilding;
         
+        // Create health bar for new building
+        this.createBuildingHealth(x, y, this.selectedBuilding);
+        
         Debug.log('Building placed successfully', {
           category: 'building',
           data: {
@@ -640,7 +663,7 @@ export class UndergroundScene extends Scene {
 
   private spawnEnemy() {
     const groundLevel = Math.floor(this.grid.length / 2);
-    const worldX = this.gridToWorldX(0); // Start at leftmost grid position
+    const worldX = this.gridToWorldX(0);
     const worldY = groundLevel * this.cellSize + this.cellSize / 2;
     const health = 50 * this.waveNumber;
     
@@ -663,7 +686,7 @@ export class UndergroundScene extends Scene {
         0xff0000
     )
     .setDepth(50)
-    .setScrollFactor(1) // Make sure it scrolls with camera
+    .setScrollFactor(1)
     .setStrokeStyle(2, 0x000000);
 
     // Create health bar background
@@ -697,9 +720,13 @@ export class UndergroundScene extends Scene {
         health: health,
         maxHealth: health,
         speed: 50,
-        gridX: 0, // Track grid position
+        gridX: 0,
         x: worldX,
-        y: worldY
+        y: worldY,
+        damage: 10,
+        attackRange: 1,
+        lastAttackTime: 0,
+        attackCooldown: 1000
     };
     
     this.enemies.push(enemy);
@@ -724,97 +751,270 @@ export class UndergroundScene extends Scene {
     this.enemies.splice(index, 1);
   }
 
-  update(time: number, delta: number) {
-    if (this.isWaveActive) {
-        // Spawn enemies
-        this.enemySpawnTimer += delta;
-        if (this.enemySpawnTimer >= this.enemySpawnDelay && 
-            this.spawnedEnemiesCount < this.enemiesPerWave) {
-            this.spawnEnemy();
-            this.enemySpawnTimer = 0;
+  private createBuildingHealth(x: number, y: number, type: BuildingType | DefenseType) {
+    const worldX = this.gridToWorldX(x);
+    const worldY = y * this.cellSize + this.cellSize / 2;
+    
+    // Create health bar background
+    const healthBarBg = this.add.rectangle(
+        worldX,
+        worldY - 30,
+        32,
+        5,
+        0x000000
+    )
+    .setDepth(50)
+    .setScrollFactor(1);
+
+    // Create health bar
+    const healthBar = this.add.rectangle(
+        worldX,
+        worldY - 30,
+        32,
+        5,
+        0x00ff00
+    )
+    .setDepth(51)
+    .setScrollFactor(1);
+
+    // Create health text
+    const healthText = this.add.text(
+        worldX,
+        worldY - 40,
+        '',
+        {
+            fontSize: '12px',
+            color: '#ffffff',
+            backgroundColor: '#000000',
+            padding: { x: 2, y: 1 }
         }
+    )
+    .setOrigin(0.5)
+    .setDepth(52)
+    .setScrollFactor(1);
 
-        // Update enemies and handle defense attacks
-        this.enemies.forEach((enemy, index) => {
-            // Move enemy in grid coordinates
-            enemy.gridX += (enemy.speed * delta) / (1000 * this.cellSize);
-            
-            // Convert to world coordinates
-            enemy.x = this.gridToWorldX(Math.floor(enemy.gridX));
-            enemy.sprite.x = enemy.x;
-            
-            // Update health bar position
-            enemy.healthBar.background.x = enemy.x;
-            enemy.healthBar.bar.x = enemy.x;
-
-            // Remove enemies that reach the right side
-            if (enemy.gridX >= this.grid[0].length) {
-                this.destroyEnemy(index);
+    // Create troop text if it's a defense
+    let troopText: Phaser.GameObjects.Text | undefined;
+    if (this.isDefense(type)) {
+        const defenseType = type as DefenseType;
+        const troopsRequired = this.defenseProperties[defenseType].troopsRequired;
+        
+        troopText = this.add.text(
+            worldX,
+            worldY - 50,
+            `👥 ${troopsRequired}`,
+            {
+                fontSize: '12px',
+                color: '#ffffff',
+                backgroundColor: '#000000',
+                padding: { x: 2, y: 1 }
             }
-        });
+        )
+        .setOrigin(0.5)
+        .setDepth(52)
+        .setScrollFactor(1);
+    }
 
-        // Handle defense attacks
-        this.handleDefenseAttacks(time);
+    // Set building health based on type
+    let maxHealth = 100;
+    if (this.isDefense(type)) {
+        maxHealth = 150;
+    } else if (type === 'barracks') {
+        maxHealth = 200;
+    } else if (type === 'ammo') {
+        maxHealth = 250;
+    }
 
-        // Log wave status periodically
-        if (time % 1000 < 16) { // Log roughly every second
-            Debug.log('Wave status', {
-                category: 'enemy',
-                data: {
-                    waveNumber: this.waveNumber,
-                    activeEnemies: this.enemies.length,
-                    spawned: this.spawnedEnemiesCount,
-                    total: this.enemiesPerWave
-                }
-            });
-        }
+    this.buildingHealth[y][x] = {
+        health: maxHealth,
+        maxHealth: maxHealth,
+        healthBar: {
+            background: healthBarBg,
+            bar: healthBar
+        },
+        healthText: healthText,
+        troopText: troopText
+    };
+
+    // Update initial text
+    this.updateBuildingText(x, y);
+  }
+
+  private updateBuildingText(x: number, y: number) {
+    const building = this.buildingHealth[y][x];
+    if (!building) return;
+
+    const healthPercent = Math.floor((building.health / building.maxHealth) * 100);
+    building.healthText?.setText(`${healthPercent}%`);
+
+    const cell = this.grid[y][x];
+    if (building.troopText && cell && this.isDefense(cell)) {
+        const defenseType = cell as DefenseType;
+        const troopsRequired = this.defenseProperties[defenseType].troopsRequired;
+        const mannedTroops = building.mannedTroops || 0;
+        const isFullyManned = mannedTroops >= troopsRequired;
+        building.troopText.setText(`👥 ${mannedTroops}/${troopsRequired}${isFullyManned ? '✓' : '✗'}`);
+        building.troopText.setColor(isFullyManned ? '#00ff00' : '#ff0000');
     }
   }
 
-  private updateResources() {
-    // Count resource buildings
-    let barracksCount = 0;
-    let ammoCount = 0;
-    let defenseCount = 0;
+  private damageBuilding(x: number, y: number, damage: number) {
+    const building = this.buildingHealth[y][x];
+    if (building) {
+        building.health -= damage;
+        
+        // Update health bar
+        const healthPercent = building.health / building.maxHealth;
+        building.healthBar.bar.width = 32 * healthPercent;
+        building.healthBar.bar.setFillStyle(
+            healthPercent > 0.5 ? 0x00ff00 :
+            healthPercent > 0.25 ? 0xffff00 : 0xff0000
+        );
 
-    this.grid.forEach(row => {
-        row.forEach(cell => {
-            if (cell === 'barracks') barracksCount++;
-            if (cell === 'ammo') ammoCount++;
-            if (cell && this.isDefense(cell)) defenseCount++;
+        // Update health text
+        this.updateBuildingText(x, y);
+
+        // Check if building is destroyed
+        if (building.health <= 0) {
+            this.destroyBuilding(x, y);
+        }
+
+        Debug.log('Building damaged', {
+            category: 'combat',
+            data: {
+                position: { x, y },
+                damage,
+                remainingHealth: building.health
+            }
+        });
+    }
+  }
+
+  private destroyBuilding(x: number, y: number) {
+    const building = this.grid[y][x];
+    if (building) {
+        // Remove health bars and text
+        if (this.buildingHealth[y][x]) {
+            this.buildingHealth[y][x].healthBar.background.destroy();
+            this.buildingHealth[y][x].healthBar.bar.destroy();
+            this.buildingHealth[y][x].healthText?.destroy();
+            this.buildingHealth[y][x].troopText?.destroy();
+            this.buildingHealth[y][x] = null;
+        }
+
+        // If it's a defense, remove troops
+        if (this.isDefense(building)) {
+            const defenseType = building as DefenseType;
+            this.resources.troops -= this.defenseProperties[defenseType].troopsRequired;
+        }
+
+        // Remove building
+        this.grid[y][x] = null;
+        this.drawGrid();
+
+        Debug.log('Building destroyed', {
+            category: 'combat',
+            data: {
+                type: building,
+                position: { x, y }
+            }
+        });
+    }
+  }
+
+  private handleEnemyAttacks(time: number) {
+    this.enemies.forEach(enemy => {
+        // Check for buildings in attack range
+        const gridX = Math.floor(enemy.gridX);
+        const gridY = Math.floor(this.grid.length / 2); // Ground level
+
+        // Check adjacent cells for buildings
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                const targetX = gridX + dx;
+                const targetY = gridY + dy;
+
+                // Check if position is valid and contains a building
+                if (targetX >= 0 && targetX < this.grid[0].length &&
+                    targetY >= 0 && targetY < this.grid.length &&
+                    this.grid[targetY][targetX]) {
+                    
+                    const building = this.grid[targetY][targetX];
+                    
+                    // Check if enough time has passed since last attack
+                    if (time - enemy.lastAttackTime >= enemy.attackCooldown) {
+                        // If building has troops, kill them first
+                        if (this.isDefense(building)) {
+                            const defenseType = building as DefenseType;
+                            const troopsRequired = this.defenseProperties[defenseType].troopsRequired;
+                            
+                            if (this.resources.troops >= troopsRequired) {
+                                // Kill troops
+                                this.resources.troops -= troopsRequired;
+                                Debug.log('Troops killed', {
+                                    category: 'combat',
+                                    data: {
+                                        defenseType,
+                                        troopsKilled: troopsRequired,
+                                        remainingTroops: this.resources.troops
+                                    }
+                                });
+                            } else {
+                                // Attack building
+                                this.damageBuilding(targetX, targetY, enemy.damage);
+                            }
+                        } else {
+                            // Attack building directly
+                            this.damageBuilding(targetX, targetY, enemy.damage);
+                        }
+
+                        enemy.lastAttackTime = time;
+                    }
+                }
+            }
+        }
+    });
+  }
+
+  private distributeTroops() {
+    // Reset all manned troops
+    this.grid.forEach((row, y) => {
+        row.forEach((cell, x) => {
+            if (cell && this.isDefense(cell) && this.buildingHealth[y][x]) {
+                this.buildingHealth[y][x]!.mannedTroops = 0;
+            }
         });
     });
 
-    // Update max resources
-    this.resources.maxTroops = barracksCount * 10; // Each barracks provides 10 troops
-    this.resources.maxAmmo = ammoCount * 50;      // Each ammo depot provides 50 ammo
-
-    // Generate resources
-    if (this.resources.troops < this.resources.maxTroops) {
-        this.resources.troops = Math.min(this.resources.troops + barracksCount, this.resources.maxTroops);
-    }
-    if (this.resources.ammo < this.resources.maxAmmo) {
-        this.resources.ammo = Math.min(this.resources.ammo + ammoCount, this.resources.maxAmmo);
-    }
-
-    // Update resource display
-    this.resourceText.setText(
-        `Troops: ${this.resources.troops}/${this.resources.maxTroops}\n` +
-        `Ammo: ${this.resources.ammo}/${this.resources.maxAmmo}`
-    );
-
-    Debug.log('Resources updated', {
-        category: 'system',
-        data: {
-            troops: this.resources.troops,
-            maxTroops: this.resources.maxTroops,
-            ammo: this.resources.ammo,
-            maxAmmo: this.resources.maxAmmo,
-            barracksCount,
-            ammoCount,
-            defenseCount
-        }
+    // Get all defenses and sort by priority (you can adjust the priority logic)
+    const defenses: {x: number, y: number, type: DefenseType, required: number}[] = [];
+    this.grid.forEach((row, y) => {
+        row.forEach((cell, x) => {
+            if (cell && this.isDefense(cell)) {
+                const defenseType = cell as DefenseType;
+                defenses.push({
+                    x, y,
+                    type: defenseType,
+                    required: this.defenseProperties[defenseType].troopsRequired
+                });
+            }
+        });
     });
+
+    // Sort defenses by required troops (highest first)
+    defenses.sort((a, b) => b.required - a.required);
+
+    // Distribute troops
+    let remainingTroops = this.resources.troops;
+    for (const defense of defenses) {
+        const building = this.buildingHealth[defense.y][defense.x];
+        if (building) {
+            const troopsToAssign = Math.min(remainingTroops, defense.required);
+            building.mannedTroops = troopsToAssign;
+            remainingTroops -= troopsToAssign;
+            this.updateBuildingText(defense.x, defense.y);
+        }
+    }
   }
 
   private handleDefenseAttacks(time: number) {
@@ -823,29 +1023,6 @@ export class UndergroundScene extends Scene {
     // Clear previous attack graphics
     this.attackGraphics.clear();
 
-    // Calculate total troops required by all defenses
-    let totalTroopsRequired = 0;
-    this.grid.forEach(row => {
-        row.forEach(cell => {
-            if (cell && this.isDefense(cell)) {
-                totalTroopsRequired += this.defenseProperties[cell as DefenseType].troopsRequired;
-            }
-        });
-    });
-
-    // Check if we have enough troops
-    if (totalTroopsRequired > this.resources.troops) {
-        Debug.log('Not enough troops to man all defenses', {
-            category: 'combat',
-            level: 'warn',
-            data: {
-                required: totalTroopsRequired,
-                available: this.resources.troops
-            }
-        });
-        return;
-    }
-
     // Check each defense in the grid
     for (let y = 0; y <= groundLevel; y++) {
         for (let x = 0; x < this.grid[0].length; x++) {
@@ -853,21 +1030,18 @@ export class UndergroundScene extends Scene {
             if (cell && this.isDefense(cell)) {
                 const defenseType = cell as DefenseType;
                 const props = this.defenseProperties[defenseType];
+                const building = this.buildingHealth[y][x];
+                
+                // Skip if not fully manned
+                if (!building || !building.mannedTroops || building.mannedTroops < props.troopsRequired) {
+                    continue;
+                }
                 
                 // Skip observation posts as they don't attack
                 if (defenseType === 'observation') continue;
 
                 // Check if we have enough ammo
                 if (this.resources.ammo < props.ammoPerShot) {
-                    Debug.log('Not enough ammo for defense', {
-                        category: 'combat',
-                        level: 'warn',
-                        data: {
-                            defenseType,
-                            ammoRequired: props.ammoPerShot,
-                            ammoAvailable: this.resources.ammo
-                        }
-                    });
                     continue;
                 }
 
@@ -970,5 +1144,104 @@ export class UndergroundScene extends Scene {
 
     this.isWaveActive = false;
     this.waveNumber++;
+  }
+
+  update(time: number, delta: number) {
+    if (this.isWaveActive) {
+        // Spawn enemies
+        this.enemySpawnTimer += delta;
+        if (this.enemySpawnTimer >= this.enemySpawnDelay && 
+            this.spawnedEnemiesCount < this.enemiesPerWave) {
+            this.spawnEnemy();
+            this.enemySpawnTimer = 0;
+        }
+
+        // Update enemies and handle defense attacks
+        this.enemies.forEach((enemy, index) => {
+            // Move enemy in grid coordinates
+            enemy.gridX += (enemy.speed * delta) / (1000 * this.cellSize);
+            
+            // Convert to world coordinates
+            enemy.x = this.gridToWorldX(Math.floor(enemy.gridX));
+            enemy.sprite.x = enemy.x;
+            
+            // Update health bar position
+            enemy.healthBar.background.x = enemy.x;
+            enemy.healthBar.bar.x = enemy.x;
+
+            // Remove enemies that reach the right side
+            if (enemy.gridX >= this.grid[0].length) {
+                this.destroyEnemy(index);
+            }
+        });
+
+        // Handle enemy attacks
+        this.handleEnemyAttacks(time);
+
+        // Handle defense attacks
+        this.handleDefenseAttacks(time);
+
+        // Log wave status periodically
+        if (time % 1000 < 16) {
+            Debug.log('Wave status', {
+                category: 'enemy',
+                data: {
+                    waveNumber: this.waveNumber,
+                    activeEnemies: this.enemies.length,
+                    spawned: this.spawnedEnemiesCount,
+                    total: this.enemiesPerWave
+                }
+            });
+        }
+    }
+  }
+
+  private updateResources() {
+    // Count resource buildings
+    let barracksCount = 0;
+    let ammoCount = 0;
+    let defenseCount = 0;
+
+    this.grid.forEach(row => {
+        row.forEach(cell => {
+            if (cell === 'barracks') barracksCount++;
+            if (cell === 'ammo') ammoCount++;
+            if (cell && this.isDefense(cell)) defenseCount++;
+        });
+    });
+
+    // Update max resources
+    this.resources.maxTroops = barracksCount * 10; // Each barracks provides 10 troops
+    this.resources.maxAmmo = ammoCount * 50;      // Each ammo depot provides 50 ammo
+
+    // Generate resources
+    if (this.resources.troops < this.resources.maxTroops) {
+        this.resources.troops = Math.min(this.resources.troops + barracksCount, this.resources.maxTroops);
+    }
+    if (this.resources.ammo < this.resources.maxAmmo) {
+        this.resources.ammo = Math.min(this.resources.ammo + ammoCount, this.resources.maxAmmo);
+    }
+
+    // Distribute troops among defenses
+    this.distributeTroops();
+
+    // Update resource display
+    this.resourceText.setText(
+        `Troops: ${this.resources.troops}/${this.resources.maxTroops}\n` +
+        `Ammo: ${this.resources.ammo}/${this.resources.maxAmmo}`
+    );
+
+    Debug.log('Resources updated', {
+        category: 'system',
+        data: {
+            troops: this.resources.troops,
+            maxTroops: this.resources.maxTroops,
+            ammo: this.resources.ammo,
+            maxAmmo: this.resources.maxAmmo,
+            barracksCount,
+            ammoCount,
+            defenseCount
+        }
+    });
   }
 } 
