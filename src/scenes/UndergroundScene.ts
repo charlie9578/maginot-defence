@@ -75,10 +75,9 @@ export class UndergroundScene extends Scene {
     maxTroops: 0,
     ammo: 0,
     maxAmmo: 0,
-    money: 5000,  // Increased starting money
+    money: 5000,  // Starting money
     maxMoney: 5000
   };
-  private resourceText!: Phaser.GameObjects.Text;
   private defenseProperties: Record<DefenseType, DefenseProperties> = {
     bunker: { range: 3, damage: 10, fireRate: 1000, lastAttackTime: 0, troopsRequired: 2, ammoPerShot: 1 },
     artillery: { range: 5, damage: 30, fireRate: 2000, lastAttackTime: 0, troopsRequired: 4, ammoPerShot: 3 },
@@ -87,7 +86,7 @@ export class UndergroundScene extends Scene {
   };
   private attackGraphics: Phaser.GameObjects.Graphics;
   private killCount: number = 0;
-  private killCountText!: Phaser.GameObjects.Text;
+  private frameCount: number = 0;
 
   private colors: Record<BuildingType | DefenseType, number> = {
     // Underground buildings
@@ -145,26 +144,6 @@ export class UndergroundScene extends Scene {
     this.setupInteraction();
     this.setupZoomControls();
 
-    // Create invisible text objects for resource display and kill count
-    // These will be used to emit events but won't be visible
-    this.resourceText = this.add.text(0, 0, '', {
-        fontSize: '16px',
-        color: '#ffffff',
-        backgroundColor: '#000000',
-        padding: { x: 10, y: 5 }
-    })
-    .setDepth(100)
-    .setVisible(false);
-
-    this.killCountText = this.add.text(0, 0, 'Kills: 0', {
-        fontSize: '16px',
-        color: '#ffffff',
-        backgroundColor: '#000000',
-        padding: { x: 10, y: 5 }
-    })
-    .setDepth(100)
-    .setVisible(false);
-
     // Start resource generation
     this.time.addEvent({
         delay: 1000,
@@ -183,6 +162,10 @@ export class UndergroundScene extends Scene {
 
     // Add window resize handler
     this.scale.on('resize', this.handleResize, this);
+
+    // Initial resource update
+    this.updateResources();
+    this.frameCount = 0;
   }
 
   private handleResize(gameSize: Phaser.Structs.Size) {
@@ -458,6 +441,9 @@ export class UndergroundScene extends Scene {
         
         // Create health bar for new building
         this.createBuildingHealth(x, y, this.selectedBuilding);
+        
+        // Emit event to update resources immediately
+        this.events.emit('updateResources', this.resources);
         
         Debug.log('Building placed successfully', {
           category: 'building',
@@ -790,7 +776,6 @@ export class UndergroundScene extends Scene {
     
     // Increment kill count
     this.killCount++;
-    this.killCountText.setText(`Kills: ${this.killCount}`);
     
     // Emit event with updated kill count
     this.events.emit('updateKillCount', this.killCount);
@@ -956,6 +941,9 @@ export class UndergroundScene extends Scene {
         // Remove building
         this.grid[y][x] = null;
         this.drawGrid();
+        
+        // Emit event to update resources immediately
+        this.events.emit('updateResources', this.resources);
 
         Debug.log('Building destroyed', {
             category: 'combat',
@@ -1185,6 +1173,7 @@ export class UndergroundScene extends Scene {
   }
 
   update(time: number, delta: number) {
+    this.frameCount++;
     if (this.isWaveActive) {
         // Spawn enemies
         this.enemySpawnTimer += delta;
@@ -1239,6 +1228,11 @@ export class UndergroundScene extends Scene {
       this.lastCameraX = this.cameras.main.scrollX;
       this.lastCameraY = this.cameras.main.scrollY;
     }
+
+    // Update resources periodically (every 60 frames)
+    if (this.frameCount % 60 === 0) {
+      this.updateResources();
+    }
   }
 
   private updateResources() {
@@ -1248,60 +1242,28 @@ export class UndergroundScene extends Scene {
     let defenseCount = 0;
     let commandCount = 0;
 
-    this.grid.forEach(row => {
-        row.forEach(cell => {
-            if (cell === 'barracks') barracksCount++;
-            if (cell === 'ammo') ammoCount++;
-            if (cell && this.isDefense(cell)) defenseCount++;
-            if (cell === 'command') commandCount++;
-        });
-    });
-
-    // Update max resources
-    this.resources.maxTroops = barracksCount * 10; // Each barracks provides 10 troops
-    this.resources.maxAmmo = ammoCount * 50;      // Each ammo depot provides 50 ammo
-    this.resources.maxMoney = 1000 + (commandCount * 500); // Each command center provides 500 money capacity
-
-    // Generate resources
-    if (this.resources.troops < this.resources.maxTroops) {
-        this.resources.troops = Math.min(this.resources.troops + barracksCount, this.resources.maxTroops);
-    }
-    if (this.resources.ammo < this.resources.maxAmmo) {
-        this.resources.ammo = Math.min(this.resources.ammo + ammoCount, this.resources.maxAmmo);
-    }
-    if (this.resources.money < this.resources.maxMoney) {
-        this.resources.money = Math.min(this.resources.money + commandCount * 10, this.resources.maxMoney); // Each command center generates 10 money per tick
-    }
-
-    // Distribute troops among defenses
-    this.distributeTroops();
-
-    // Update resource display
-    this.resourceText.setText(
-        `Money: $${this.resources.money}/${this.resources.maxMoney}\n` +
-        `Troops: ${this.resources.troops}/${this.resources.maxTroops}\n` +
-        `Ammo: ${this.resources.ammo}/${this.resources.maxAmmo}\n` +
-        `Selected: ${this.getBuildingInfo(this.selectedBuilding).name} ($${this.buildingCosts[this.selectedBuilding]})`
-    );
-
-    // Emit event with updated resources
-    this.events.emit('updateResources', this.resources);
-
-    Debug.log('Resources updated', {
-        category: 'system',
-        data: {
-            money: this.resources.money,
-            maxMoney: this.resources.maxMoney,
-            troops: this.resources.troops,
-            maxTroops: this.resources.maxTroops,
-            ammo: this.resources.ammo,
-            maxAmmo: this.resources.maxAmmo,
-            barracksCount,
-            ammoCount,
-            commandCount,
-            defenseCount
+    for (let y = 0; y < this.grid.length; y++) {
+      for (let x = 0; x < this.grid[y].length; x++) {
+        const building = this.grid[y][x];
+        if (building) {
+          if (building === 'barracks') barracksCount++;
+          else if (building === 'ammo') ammoCount++;
+          else if (this.isDefense(building)) defenseCount++;
+          else if (building === 'command') commandCount++;
         }
-    });
+      }
+    }
+
+    // Update resource values
+    // Only update money from command centers if there are any
+    if (commandCount > 0) {
+      this.resources.money = commandCount * 100;
+    }
+    this.resources.ammo = ammoCount * 50;
+    this.resources.troops = barracksCount * 10;
+
+    // Emit event to update UI
+    this.events.emit('updateResources', this.resources);
   }
 
   // Add a new method to update all building health positions
