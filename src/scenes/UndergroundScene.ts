@@ -117,6 +117,9 @@ export class UndergroundScene extends Scene {
     observation: 150
   };
 
+  private lastCameraX: number = 0;
+  private lastCameraY: number = 0;
+
   constructor() {
     super({ key: 'UndergroundScene' });
   }
@@ -142,33 +145,25 @@ export class UndergroundScene extends Scene {
     this.setupInteraction();
     this.setupZoomControls();
 
-    // Add resource display
-    this.resourceText = this.add.text(10, 10, '', {
+    // Create invisible text objects for resource display and kill count
+    // These will be used to emit events but won't be visible
+    this.resourceText = this.add.text(0, 0, '', {
         fontSize: '16px',
         color: '#ffffff',
         backgroundColor: '#000000',
-        padding: { x: 10, y: 5 }
-    }).setDepth(100);
-
-    // Add kill count display
-    this.killCountText = this.add.text(10, 80, 'Kills: 0', {
-        fontSize: '16px',
-        color: '#ffffff',
-        backgroundColor: '#000000',
-        padding: { x: 10, y: 5 }
-    }).setDepth(100);
-
-    // Add wave start button
-    const startButton = this.add.text(this.scale.width - 100, 10, 'Start Wave', {
-        backgroundColor: '#00ff00',
         padding: { x: 10, y: 5 }
     })
-    .setInteractive()
-    .setDepth(100);
+    .setDepth(100)
+    .setVisible(false);
 
-    startButton.on('pointerdown', () => {
-        this.startWave();
-    });
+    this.killCountText = this.add.text(0, 0, 'Kills: 0', {
+        fontSize: '16px',
+        color: '#ffffff',
+        backgroundColor: '#000000',
+        padding: { x: 10, y: 5 }
+    })
+    .setDepth(100)
+    .setVisible(false);
 
     // Start resource generation
     this.time.addEvent({
@@ -340,9 +335,14 @@ export class UndergroundScene extends Scene {
         enemy.gridX = gridX;
         enemy.x = this.gridToWorldX(Math.floor(gridX));
         enemy.sprite.x = enemy.x;
+        
+        // Update health bar position
         enemy.healthBar.background.x = enemy.x;
         enemy.healthBar.bar.x = enemy.x;
       });
+
+      // Update building health bar positions
+      this.updateAllBuildingHealthPositions();
 
       // Redraw the grid
       this.drawGrid();
@@ -657,7 +657,24 @@ export class UndergroundScene extends Scene {
     return counts;
   }
 
-  private startWave() {
+  private endWave() {
+    Debug.log('Wave completed', {
+        category: 'enemy',
+        data: {
+            waveNumber: this.waveNumber,
+            nextWave: this.waveNumber + 1
+        }
+    });
+
+    this.isWaveActive = false;
+    this.waveNumber++;
+    
+    // Emit event for wave state change
+    this.events.emit('waveStateChanged', this.isWaveActive);
+  }
+
+  // Make startWave public
+  public startWave() {
     Debug.log('Starting wave', {
         category: 'enemy',
         data: {
@@ -669,6 +686,9 @@ export class UndergroundScene extends Scene {
     this.isWaveActive = true;
     this.enemySpawnTimer = 0;
     this.spawnedEnemiesCount = 0;
+    
+    // Emit event for wave state change
+    this.events.emit('waveStateChanged', this.isWaveActive);
     
     // Clear any remaining enemies
     this.enemies.forEach(enemy => {
@@ -771,6 +791,9 @@ export class UndergroundScene extends Scene {
     // Increment kill count
     this.killCount++;
     this.killCountText.setText(`Kills: ${this.killCount}`);
+    
+    // Emit event with updated kill count
+    this.events.emit('updateKillCount', this.killCount);
   }
 
   private createBuildingHealth(x: number, y: number, type: BuildingType | DefenseType) {
@@ -1161,19 +1184,6 @@ export class UndergroundScene extends Scene {
     return ['bunker', 'artillery', 'machinegun', 'observation'].includes(type);
   }
 
-  private endWave() {
-    Debug.log('Wave completed', {
-        category: 'enemy',
-        data: {
-            waveNumber: this.waveNumber,
-            nextWave: this.waveNumber + 1
-        }
-    });
-
-    this.isWaveActive = false;
-    this.waveNumber++;
-  }
-
   update(time: number, delta: number) {
     if (this.isWaveActive) {
         // Spawn enemies
@@ -1222,6 +1232,13 @@ export class UndergroundScene extends Scene {
             });
         }
     }
+    
+    // Update building health positions when camera moves
+    if (this.cameras.main.scrollX !== this.lastCameraX || this.cameras.main.scrollY !== this.lastCameraY) {
+      this.updateAllBuildingHealthPositions();
+      this.lastCameraX = this.cameras.main.scrollX;
+      this.lastCameraY = this.cameras.main.scrollY;
+    }
   }
 
   private updateResources() {
@@ -1267,6 +1284,9 @@ export class UndergroundScene extends Scene {
         `Selected: ${this.getBuildingInfo(this.selectedBuilding).name} ($${this.buildingCosts[this.selectedBuilding]})`
     );
 
+    // Emit event with updated resources
+    this.events.emit('updateResources', this.resources);
+
     Debug.log('Resources updated', {
         category: 'system',
         data: {
@@ -1281,6 +1301,34 @@ export class UndergroundScene extends Scene {
             commandCount,
             defenseCount
         }
+    });
+  }
+
+  // Add a new method to update all building health positions
+  private updateAllBuildingHealthPositions() {
+    this.grid.forEach((row, y) => {
+      row.forEach((cell, x) => {
+        if (cell && this.buildingHealth[y][x]) {
+          const building = this.buildingHealth[y][x];
+          if (building) {
+            const worldX = this.gridToWorldX(x);
+            const worldY = y * this.cellSize + this.cellSize / 2;
+            
+            // Update health bar positions
+            building.healthBar.background.x = worldX;
+            building.healthBar.bar.x = worldX;
+            
+            // Update text positions
+            if (building.healthText) {
+              building.healthText.x = worldX;
+            }
+            
+            if (building.troopText) {
+              building.troopText.x = worldX;
+            }
+          }
+        }
+      });
     });
   }
 } 
