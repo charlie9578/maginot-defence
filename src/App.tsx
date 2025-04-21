@@ -106,6 +106,10 @@ function App() {
     }
   }, [gameInstance]);
 
+  useEffect(() => {
+    console.log('Resources prop changed:', resources);
+  }, [resources]);
+
   const handleStartWave = () => {
     if (gameInstance) {
       const scene = gameInstance.scene.getScene('UndergroundScene') as UndergroundScene;

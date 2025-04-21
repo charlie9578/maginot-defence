@@ -1248,6 +1248,7 @@ export class UndergroundScene extends Scene {
     // Emit event to update UI
     console.log('Updating resources:', this.resources);
     this.events.emit('updateResources', this.resources);
+
   }
 
   // Add a new method to update all building health positions

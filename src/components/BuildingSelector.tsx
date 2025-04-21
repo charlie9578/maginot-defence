@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ResourcePanel from './ResourcePanel'; // Import the new ResourcePanel
 
 type BuildingType = 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
 type DefenseType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
@@ -33,6 +34,7 @@ const buildings: { type: BuildingType | DefenseType; name: string; color: string
   { type: 'observation', name: 'Observation Post', color: '#A0522D', category: 'defense' },
 ];
 
+
 export const BuildingSelector: React.FC<BuildingSelectorProps> = ({
   onSelectBuilding,
   selectedBuilding,
@@ -41,40 +43,47 @@ export const BuildingSelector: React.FC<BuildingSelectorProps> = ({
   resources,
   killCount
 }) => {
+  const [currentResources, setCurrentResources] = useState(resources);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Update currentResources with the latest resources
+      setCurrentResources(prevResources => ({
+        ...prevResources,
+        // You can add logic here to modify specific resource values if needed
+        money: resources.money,
+        troops: resources.troops,
+        ammo: resources.ammo,
+        maxMoney: resources.maxMoney,
+        maxTroops: resources.maxTroops,
+        maxAmmo: resources.maxAmmo,
+      }));
+    }, 1000); // Update every second
+
+    return () => clearInterval(interval); // Cleanup on unmount
+  }, []); // Empty dependency array to run only once on mount
+
+
+
   console.log('Rendering BuildingSelector with props:', {
     selectedBuilding,
-    resources,
+    resources: currentResources, // Use updated resources
     killCount,
     isWaveActive
   });
 
-  console.log('Passing resources to BuildingSelector:', resources);
-
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-gray-800 p-4 border-t-2 border-gray-700">
       <div className="max-w-4xl mx-auto">
-        {/* Resource display and controls */}
+        {/* Resource display moved to ResourcePanel */}
+        <ResourcePanel resources={resources} killCount={killCount} />
+
         <div className="flex justify-between items-center mb-4">
-          <div className="text-white text-sm bg-black bg-opacity-50 p-2 rounded">
-            <div>Money: ${resources.money}/{resources.maxMoney}</div>
-            <div>Troops: {resources.troops}/{resources.maxTroops}</div>
-            <div>Ammo: {resources.ammo}/{resources.maxAmmo}</div>
-          </div>
-          
           <div className="flex items-center gap-4">
-            <div className="text-white text-sm bg-black bg-opacity-50 p-2 rounded">
-              Kills: {killCount}
-            </div>
-            
             <button
               onClick={onStartWave}
               disabled={isWaveActive}
-              className={`
-                px-4 py-2 rounded font-bold
-                ${isWaveActive 
-                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
-                  : 'bg-green-600 text-white hover:bg-green-700'}
-              `}
+              className={`px-4 py-2 rounded font-bold ${isWaveActive ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
             >
               {isWaveActive ? 'Wave Active' : 'Start Wave'}
             </button>
@@ -93,7 +102,7 @@ export const BuildingSelector: React.FC<BuildingSelectorProps> = ({
                   onClick={() => onSelectBuilding(type)}
                   className={`
                     flex flex-col items-center p-2 rounded
-                    ${selectedBuilding === type ? 'ring-2 ring-white' : ''}
+                    ${selectedBuilding === type ? 'ring-2 ring-white' : ''} 
                     hover:bg-gray-700 transition-colors
                   `}
                 >
@@ -115,9 +124,9 @@ export const BuildingSelector: React.FC<BuildingSelectorProps> = ({
                 <button
                   key={type}
                   onClick={() => onSelectBuilding(type)}
-                  className={`
+                  className={` 
                     flex flex-col items-center p-2 rounded
-                    ${selectedBuilding === type ? 'ring-2 ring-white' : ''}
+                    ${selectedBuilding === type ? 'ring-2 ring-white' : ''} 
                     hover:bg-gray-700 transition-colors
                   `}
                 >
