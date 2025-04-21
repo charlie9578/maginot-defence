@@ -2,6 +2,7 @@ import { Scene } from 'phaser';
 import { BuildingType, BUILDING_COLORS, isSurfaceDefense } from '../types/grid';
 import { Debug } from '../utils/Debug';
 import { BUILDINGS, UndergroundType } from '../types/grid';
+import { GridManager } from './GridManager';
 
 type DefenseType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
 type CellContent = BuildingType | DefenseType | null;
@@ -122,6 +123,7 @@ export class UndergroundScene extends Scene {
 
   private lastCameraX: number = 0;
   private lastCameraY: number = 0;
+  private gridManager!: GridManager;
 
   constructor() {
     super({ key: 'UndergroundScene' });
@@ -141,10 +143,26 @@ export class UndergroundScene extends Scene {
       }
     });
 
+    // Initialize buildingHealth with the same dimensions as the grid
+    const cols = Math.floor(this.scale.width / this.cellSize);
+    const rows = Math.floor((this.scale.height - 100) / this.cellSize);
+    this.buildingHealth = Array(rows).fill(null).map(() => Array(cols).fill(null));
+
     this.graphics = this.add.graphics();
     this.attackGraphics = this.add.graphics();
-    this.initializeGrid();
-    this.drawGrid();
+    
+    // Initialize GridManager
+    this.gridManager = new GridManager(this, this.cellSize, this.colors, this.buildingCosts);
+    this.gridManager.initializeGrid();
+    this.gridManager.drawGrid();
+
+    // Ensure grid is initialized before accessing
+    const grid = this.gridManager['grid'];
+    if (grid.length === 0 || grid[0].length === 0) {
+      console.error('Grid is not initialized properly.');
+      return;
+    }
+
     this.setupInteraction();
     this.setupZoomControls();
 
@@ -159,8 +177,8 @@ export class UndergroundScene extends Scene {
     Debug.log('Scene creation completed', { 
       category: 'system',
       data: {
-        gridSize: `${this.grid[0].length}x${this.grid.length}`,
-        groundLevel: Math.floor(this.grid.length / 2)
+        gridSize: `${grid[0].length}x${grid.length}`,
+        groundLevel: Math.floor(grid.length / 2)
       }
     });
 
@@ -173,34 +191,8 @@ export class UndergroundScene extends Scene {
   }
 
   private handleResize(gameSize: Phaser.Structs.Size) {
-    this.initializeGrid();
-    this.drawGrid();
-  }
-
-  private initializeGrid() {
-    const cols = Math.floor(this.scale.width / this.cellSize);
-    const rows = Math.floor((this.scale.height - 100) / this.cellSize);
-    
-    // Create new grid or resize existing
-    const newGrid = Array(rows).fill(null).map(() => Array(cols).fill(null));
-    const newBuildingHealth = Array(rows).fill(null).map(() => Array(cols).fill(null));
-    
-    // Copy existing grid data if it exists
-    if (this.grid.length > 0) {
-      for (let y = 0; y < Math.min(rows, this.grid.length); y++) {
-        for (let x = 0; x < Math.min(cols, this.grid[0].length); x++) {
-          newGrid[y][x] = this.grid[y][x];
-          newBuildingHealth[y][x] = this.buildingHealth[y][x];
-        }
-      }
-    }
-    
-    this.grid = newGrid;
-    this.buildingHealth = newBuildingHealth;
-
-    // Add tunnel entrance at the right side of ground level
-    const groundLevel = Math.floor(rows / 2);
-    this.grid[groundLevel][cols - 1] = 'tunnel';
+    this.gridManager.initializeGrid();
+    this.gridManager.drawGrid();
   }
 
   public setSelectedBuilding(type: BuildingType | DefenseType) {
@@ -263,36 +255,62 @@ export class UndergroundScene extends Scene {
   private setupZoomControls() {
     // Add mouse wheel zoom
     this.input.on('wheel', (pointer: Phaser.Input.Pointer, gameObjects: any, deltaX: number, deltaY: number) => {
-      // deltaY is positive when scrolling down/away, negative when scrolling up/toward
-      const zoomChange = -deltaY * 0.001; // Adjust this value to change zoom sensitivity
-      this.zoom(zoomChange);
+      try {
+        // deltaY is positive when scrolling down/away, negative when scrolling up/toward
+        const zoomChange = -deltaY * 0.001; // Adjust this value to change zoom sensitivity
+        this.zoom(zoomChange);
+      } catch (error) {
+        console.error('Error during zoom operation:', error);
+      }
     });
 
     // Add keyboard zoom controls
     this.input.keyboard?.on('keydown-PLUS', () => {
-      this.zoom(0.1);
+      try {
+        this.zoom(0.1);
+      } catch (error) {
+        console.error('Error during keyboard zoom operation:', error);
+      }
     });
 
     this.input.keyboard?.on('keydown-MINUS', () => {
-      this.zoom(-0.1);
+      try {
+        this.zoom(-0.1);
+      } catch (error) {
+        console.error('Error during keyboard zoom operation:', error);
+      }
     });
 
     // Add touch pinch-to-zoom
     this.input.on('pinch', (pinch: any) => {
-      const zoomChange = (pinch.scaleFactor - 1) * 0.1;
-      this.zoom(zoomChange);
+      try {
+        const zoomChange = (pinch.scaleFactor - 1) * 0.1;
+        this.zoom(zoomChange);
+      } catch (error) {
+        console.error('Error during pinch-to-zoom operation:', error);
+      }
     });
 
     // Add middle mouse button drag to pan
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.isDown && pointer.button === 1) { // Middle mouse button (button 1)
-        this.cameras.main.scrollX -= pointer.velocity.x / this.currentZoom;
-        this.cameras.main.scrollY -= pointer.velocity.y / this.currentZoom;
+      try {
+        if (pointer.isDown && pointer.button === 1) { // Middle mouse button (button 1)
+          this.cameras.main.scrollX -= pointer.velocity.x / this.currentZoom;
+          this.cameras.main.scrollY -= pointer.velocity.y / this.currentZoom;
+        }
+      } catch (error) {
+        console.error('Error during pan operation:', error);
       }
     });
   }
 
   private zoom(change: number) {
+    const grid = this.gridManager['grid'];
+    if (!grid || grid.length === 0 || grid[0].length === 0) {
+      console.error('Grid is not properly initialized during zoom operation.');
+      return;
+    }
+
     const newZoom = Phaser.Math.Clamp(
       this.currentZoom + change,
       this.minZoom,
@@ -332,7 +350,7 @@ export class UndergroundScene extends Scene {
       this.updateAllBuildingHealthPositions();
 
       // Redraw the grid
-      this.drawGrid();
+      this.gridManager.drawGrid();
 
       Debug.log('Zoom updated', {
         category: 'system',
@@ -348,20 +366,24 @@ export class UndergroundScene extends Scene {
   }
 
   private worldToGridX(worldX: number): number {
-    const offsetX = (this.scale.width / this.currentZoom - this.grid[0].length * this.cellSize) / 2;
+    const grid = this.gridManager['grid'];
+    const offsetX = (this.scale.width / this.currentZoom - grid[0].length * this.cellSize) / 2;
     return Math.floor((worldX - offsetX) / this.cellSize);
   }
 
   private gridToWorldX(gridX: number): number {
-    const offsetX = (this.scale.width / this.currentZoom - this.grid[0].length * this.cellSize) / 2;
+    const grid = this.gridManager['grid'];
+    const offsetX = (this.scale.width / this.currentZoom - grid[0].length * this.cellSize) / 2;
     return offsetX + (gridX * this.cellSize) + (this.cellSize / 2);
   }
 
   private drawGrid() {
+    
     this.graphics.clear();
     
-    const cols = this.grid[0].length;
-    const rows = this.grid.length;
+    const grid = this.gridManager['grid'];
+    const cols = grid[0].length;
+    const rows = grid.length;
     const totalWidth = cols * this.cellSize;
     const totalHeight = rows * this.cellSize;
     const groundLevel = Math.floor(rows / 2);
@@ -384,7 +406,7 @@ export class UndergroundScene extends Scene {
     // Draw cells
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < cols; x++) {
-        const building = this.grid[y][x];
+        const building = grid[y][x];
         if (building) {
           this.graphics.fillStyle(this.colors[building]);
           this.graphics.fillRect(
@@ -420,9 +442,9 @@ export class UndergroundScene extends Scene {
       Debug.log('Grid updated', {
         category: 'grid',
         data: {
-          totalBuildings: this.grid.flat().filter(cell => cell !== null).length,
+          totalBuildings: grid.flat().filter(cell => cell !== null).length,
           buildingTypes: this.getBuildingCounts(),
-          groundLevel: Math.floor(this.grid.length / 2),
+          groundLevel: Math.floor(grid.length / 2),
           selectedBuilding: this.getBuildingInfo(this.selectedBuilding)
         }
       });
@@ -431,22 +453,17 @@ export class UndergroundScene extends Scene {
 
   private setupInteraction() {
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      // Convert screen coordinates to world coordinates
       const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-      const x = Math.floor((worldPoint.x - (this.scale.width / this.currentZoom - this.grid[0].length * this.cellSize) / 2) / this.cellSize);
+      const x = Math.floor((worldPoint.x - (this.scale.width / this.currentZoom - this.gridManager['grid'][0].length * this.cellSize) / 2) / this.cellSize);
       const y = Math.floor(worldPoint.y / this.cellSize);
+      const grid = this.gridManager['grid'];
       
       if (this.canBuildAt(x, y)) {
-        const previousContent = this.grid[y][x];
-        this.grid[y][x] = this.selectedBuilding;
+        const previousContent = grid[y][x];
+        grid[y][x] = this.selectedBuilding;
         
-        // Deduct building cost
         this.resources.money -= this.buildingCosts[this.selectedBuilding];
-        
-        // Create health bar for new building
         this.createBuildingHealth(x, y, this.selectedBuilding);
-        
-        // Emit event to update resources immediately
         this.events.emit('updateResources', this.resources);
         
         Debug.log('Building placed successfully', {
@@ -459,63 +476,22 @@ export class UndergroundScene extends Scene {
           }
         });
 
-        this.drawGrid();
+        this.gridManager.drawGrid();
       }
     });
   }
 
-  private getBuildFailureReason(x: number, y: number): string {
-    // Check bounds
-    if (y < 0 || y >= this.grid.length || x < 0 || x >= this.grid[0].length) {
-      return 'Position out of bounds';
-    }
-
-    const groundLevel = Math.floor(this.grid.length / 2);
-
-    // Check if cell is empty
-    if (this.grid[y][x] !== null) {
-      return 'Cell already occupied';
-    }
-
-    const isDefense = ['bunker', 'artillery', 'machinegun', 'observation'].includes(this.selectedBuilding);
-    
-    if (isDefense) {
-      if (y > groundLevel) {
-        return 'Defense structures must be at or above ground level';
-      }
-      // Add more specific defense placement rules
-      return 'Invalid defense placement';
-    } else {
-      if (y < groundLevel) {
-        return 'Underground buildings must be below ground level';
-      }
-      
-      if (this.selectedBuilding === 'elevator') {
-        if (!this.hasVerticalConnection(x, y) && !this.hasHorizontalConnection(x, y)) {
-          return 'Elevator must connect to other structures';
-        }
-      } else if (!this.hasHorizontalConnection(x, y)) {
-        return 'Building must connect to existing structures';
-      }
-    }
-
-    return 'Unknown reason';
-  }
-
   private canBuildAt(x: number, y: number): boolean {
-    // Check bounds
-    if (y < 0 || y >= this.grid.length || x < 0 || x >= this.grid[0].length) {
+    const grid = this.gridManager['grid'];
+    if (y < 0 || y >= grid.length || x < 0 || x >= grid[0].length) {
       return false;
     }
 
-    const groundLevel = Math.floor(this.grid.length / 2);
-
-    // Check if cell is empty
-    if (this.grid[y][x] !== null) {
+    const groundLevel = Math.floor(grid.length / 2);
+    if (grid[y][x] !== null) {
       return false;
     }
 
-    // Check if we have enough money
     if (this.resources.money < this.buildingCosts[this.selectedBuilding]) {
       Debug.log('Not enough money to build', {
         category: 'building',
@@ -530,27 +506,21 @@ export class UndergroundScene extends Scene {
     }
 
     const isDefense = ['bunker', 'artillery', 'machinegun', 'observation'].includes(this.selectedBuilding);
-    
     if (isDefense) {
       return this.canBuildDefense(x, y, this.selectedBuilding as DefenseType);
     } else {
-      // Underground building rules
       if (y < groundLevel) {
         return false;
       }
 
       if (this.selectedBuilding === 'elevator') {
-        // Check for vertical elevator connections
-        const cellAbove = y > 0 ? this.grid[y - 1][x] : null;
-        const cellBelow = y < this.grid.length - 1 ? this.grid[y + 1][x] : null;
+        const cellAbove = y > 0 ? grid[y - 1][x] : null;
+        const cellBelow = y < grid.length - 1 ? grid[y + 1][x] : null;
         const hasVerticalConnection = cellAbove === 'elevator' || cellBelow === 'elevator';
 
-        // If at or below ground level, also allow horizontal connections
         if (y >= groundLevel) {
           return hasVerticalConnection || this.hasHorizontalConnection(x, y);
         }
-        
-        // Above ground, only allow vertical connections
         return hasVerticalConnection;
       }
 
@@ -558,86 +528,77 @@ export class UndergroundScene extends Scene {
     }
   }
 
-  private canBuildDefense(x: number, y: number, defenseType: DefenseType): boolean {
-    const groundLevel = Math.floor(this.grid.length / 2);
-
-    // Check if we're at surface level or above
-    if (y > groundLevel) {
-      return false;
-    }
-
-    switch (defenseType) {
-      case 'bunker':
-        // Bunkers can be built:
-        // 1. On ground level next to other bunkers
-        // 2. One level up from ground if above elevator
-        if (y === groundLevel) {
-          // Allow building next to other bunkers or above elevator
-          return this.hasAdjacentBunker(x, y) || this.grid[y + 1][x] === 'elevator';
-        } else if (y === groundLevel - 1) {
-          // One level up, must be above elevator or next to another bunker
-          return this.grid[y + 1][x] === 'elevator' || this.hasAdjacentBunker(x, y);
-        }
-        return false;
-
-      case 'observation':
-        // Observation post can stack up to 3 high (groundLevel - 2)
-        if (y < groundLevel - 3) {
-          return false;
-        }
-        // Must be above elevator or another observation post
-        const below = this.grid[y + 1][x];
-        return below === 'elevator' || below === 'observation';
-
-      case 'artillery':
-      case 'machinegun':
-        // Can be built on top of bunkers or above elevators
-        const cellBelow = this.grid[y + 1][x];
-        return cellBelow === 'bunker' || cellBelow === 'elevator';
-    }
-  }
-
-  private hasAdjacentBunker(x: number, y: number): boolean {
-    const horizontalDirections = [[-1, 0], [1, 0]];
-    
-    // Check for horizontal bunker connections
-    return horizontalDirections.some(([dx, dy]) => {
-      const newX = x + dx;
-      if (newX >= 0 && newX < this.grid[0].length) {
-        return this.grid[y][newX] === 'bunker';
-      }
-      return false;
-    });
-  }
-
   private hasHorizontalConnection(x: number, y: number): boolean {
-    // Check left and right only
+    const grid = this.gridManager['grid'];
     const horizontalDirections = [
-      [-1, 0], // left
-      [1, 0],  // right
+      [-1, 0],
+      [1, 0],
     ];
 
     return horizontalDirections.some(([dx, dy]) => {
       const newX = x + dx;
       const newY = y;
-      
-      if (newY >= 0 && newY < this.grid.length && 
-          newX >= 0 && newX < this.grid[0].length) {
-        return this.grid[newY][newX] !== null;
+      if (newY >= 0 && newY < grid.length && newX >= 0 && newX < grid[0].length) {
+        return grid[newY][newX] !== null;
       }
       return false;
     });
   }
 
   private hasVerticalConnection(x: number, y: number): boolean {
-    const above = y > 0 ? this.grid[y - 1][x] : null;
-    const below = y < this.grid.length - 1 ? this.grid[y + 1][x] : null;
+    const grid = this.gridManager['grid'];
+    const above = y > 0 ? grid[y - 1][x] : null;
+    const below = y < grid.length - 1 ? grid[y + 1][x] : null;
     return above === 'elevator' || below === 'elevator';
   }
 
+  private canBuildDefense(x: number, y: number, defenseType: DefenseType): boolean {
+    const grid = this.gridManager['grid'];
+    const groundLevel = Math.floor(grid.length / 2);
+
+    if (y > groundLevel) {
+      return false;
+    }
+
+    switch (defenseType) {
+      case 'bunker':
+        if (y === groundLevel) {
+          return this.hasAdjacentBunker(x, y) || grid[y + 1][x] === 'elevator';
+        } else if (y === groundLevel - 1) {
+          return grid[y + 1][x] === 'elevator' || this.hasAdjacentBunker(x, y);
+        }
+        return false;
+
+      case 'observation':
+        if (y < groundLevel - 3) {
+          return false;
+        }
+        const below = grid[y + 1][x];
+        return below === 'elevator' || below === 'observation';
+
+      case 'artillery':
+      case 'machinegun':
+        const cellBelow = grid[y + 1][x];
+        return cellBelow === 'bunker' || cellBelow === 'elevator';
+    }
+  }
+
+  private hasAdjacentBunker(x: number, y: number): boolean {
+    const grid = this.gridManager['grid'];
+    const horizontalDirections = [[-1, 0], [1, 0]];
+    return horizontalDirections.some(([dx, dy]) => {
+      const newX = x + dx;
+      if (newX >= 0 && newX < grid[0].length) {
+        return grid[y][newX] === 'bunker';
+      }
+      return false;
+    });
+  }
+
   private getBuildingCounts(): Record<string, number> {
+    const grid = this.gridManager['grid'];
     const counts: Record<string, number> = {};
-    this.grid.forEach(row => {
+    grid.forEach(row => {
       row.forEach(cell => {
         if (cell) {
           counts[cell] = (counts[cell] || 0) + 1;
@@ -690,7 +651,8 @@ export class UndergroundScene extends Scene {
   }
 
   private spawnEnemy() {
-    const groundLevel = Math.floor(this.grid.length / 2);
+    const grid = this.gridManager['grid'];
+    const groundLevel = Math.floor(grid.length / 2);
     const worldX = this.gridToWorldX(0);
     const worldY = groundLevel * this.cellSize + this.cellSize / 2;
     const health = 50 * this.waveNumber;
@@ -787,6 +749,7 @@ export class UndergroundScene extends Scene {
   }
 
   private createBuildingHealth(x: number, y: number, type: BuildingType | DefenseType) {
+    const grid = this.gridManager['grid'];
     const worldX = this.gridToWorldX(x);
     const worldY = y * this.cellSize + this.cellSize / 2;
     
@@ -882,7 +845,8 @@ export class UndergroundScene extends Scene {
     const healthPercent = Math.floor((building.health / building.maxHealth) * 100);
     building.healthText?.setText(`${healthPercent}%`);
 
-    const cell = this.grid[y][x];
+    const grid = this.gridManager['grid'];
+    const cell = grid[y][x];
     if (building.troopText && cell && this.isDefense(cell)) {
         const defenseType = cell as DefenseType;
         const troopsRequired = this.defenseProperties[defenseType].troopsRequired;
@@ -926,7 +890,8 @@ export class UndergroundScene extends Scene {
   }
 
   private destroyBuilding(x: number, y: number) {
-    const building = this.grid[y][x];
+    const grid = this.gridManager['grid'];
+    const building = grid[y][x];
     if (building) {
         // Remove health bars and text
         if (this.buildingHealth[y][x]) {
@@ -944,8 +909,8 @@ export class UndergroundScene extends Scene {
         }
 
         // Remove building
-        this.grid[y][x] = null;
-        this.drawGrid();
+        grid[y][x] = null;
+        this.gridManager.drawGrid();
         
         // Update resources to recalculate max values
         this.updateResources();
@@ -961,10 +926,11 @@ export class UndergroundScene extends Scene {
   }
 
   private handleEnemyAttacks(time: number) {
+    const grid = this.gridManager['grid'];
     this.enemies.forEach(enemy => {
         // Check for buildings in attack range
         const gridX = Math.floor(enemy.gridX);
-        const gridY = Math.floor(this.grid.length / 2); // Ground level
+        const gridY = Math.floor(grid.length / 2); // Ground level
 
         // Check adjacent cells for buildings
         for (let dx = -1; dx <= 1; dx++) {
@@ -973,11 +939,11 @@ export class UndergroundScene extends Scene {
                 const targetY = gridY + dy;
 
                 // Check if position is valid and contains a building
-                if (targetX >= 0 && targetX < this.grid[0].length &&
-                    targetY >= 0 && targetY < this.grid.length &&
-                    this.grid[targetY][targetX]) {
+                if (targetX >= 0 && targetX < grid[0].length &&
+                    targetY >= 0 && targetY < grid.length &&
+                    grid[targetY][targetX]) {
                     
-                    const building = this.grid[targetY][targetX];
+                    const building = grid[targetY][targetX];
                     
                     // Check if enough time has passed since last attack
                     if (time - enemy.lastAttackTime >= enemy.attackCooldown) {
@@ -1017,15 +983,16 @@ export class UndergroundScene extends Scene {
   }
 
   private handleDefenseAttacks(time: number) {
-    const groundLevel = Math.floor(this.grid.length / 2);
+    const grid = this.gridManager['grid'];
+    const groundLevel = Math.floor(grid.length / 2);
     
     // Clear previous attack graphics
     this.attackGraphics.clear();
 
     // Check each defense in the grid
     for (let y = 0; y <= groundLevel; y++) {
-        for (let x = 0; x < this.grid[0].length; x++) {
-            const cell = this.grid[y][x];
+        for (let x = 0; x < grid[0].length; x++) {
+            const cell = grid[y][x];
             if (cell && this.isDefense(cell)) {
                 const defenseType = cell as DefenseType;
                 const props = this.defenseProperties[defenseType];
@@ -1073,6 +1040,7 @@ export class UndergroundScene extends Scene {
   }
 
   private attackEnemy(defenseType: DefenseType, defenseX: number, defenseY: number, enemy: Enemy, time: number) {
+    const grid = this.gridManager['grid'];
     const props = this.defenseProperties[defenseType];
     const defenseWorldX = this.gridToWorldX(defenseX);
     const defenseWorldY = defenseY * this.cellSize + this.cellSize / 2;
@@ -1141,6 +1109,7 @@ export class UndergroundScene extends Scene {
   }
 
   update(time: number, delta: number) {
+    const grid = this.gridManager['grid'];
     this.frameCount++;
     if (this.isWaveActive) {
         // Spawn enemies
@@ -1165,7 +1134,7 @@ export class UndergroundScene extends Scene {
             enemy.healthBar.bar.x = enemy.x;
 
             // Remove enemies that reach the right side
-            if (enemy.gridX >= this.grid[0].length) {
+            if (enemy.gridX >= grid[0].length) {
                 this.destroyEnemy(index);
             }
         });
@@ -1199,15 +1168,16 @@ export class UndergroundScene extends Scene {
   }
 
   private updateResources() {
+    const grid = this.gridManager['grid'];
     // Count resource buildings
     let barracksCount = 0;
     let ammoCount = 0;
     let defenseCount = 0;
     let commandCount = 0;
 
-    for (let y = 0; y < this.grid.length; y++) {
-      for (let x = 0; x < this.grid[y].length; x++) {
-        const building = this.grid[y][x];
+    for (let y = 0; y < grid.length; y++) {
+      for (let x = 0; x < grid[y].length; x++) {
+        const building = grid[y][x];
         if (building) {
           if (building === 'barracks') barracksCount++;
           else if (building === 'ammo') ammoCount++;
@@ -1253,7 +1223,17 @@ export class UndergroundScene extends Scene {
 
   // Add a new method to update all building health positions
   private updateAllBuildingHealthPositions() {
-    this.grid.forEach((row, y) => {
+    const grid = this.gridManager['grid'];
+    Debug.log('Updating building health positions', {
+      category: 'building',
+      data: {
+        gridRows: grid.length,
+        gridCols: grid[0].length,
+        buildingHealthRows: this.buildingHealth.length,
+        buildingHealthCols: this.buildingHealth[0]?.length || 0
+      }
+    });
+    grid.forEach((row, y) => {
       row.forEach((cell, x) => {
         if (cell && this.buildingHealth[y][x]) {
           const building = this.buildingHealth[y][x];
@@ -1280,8 +1260,9 @@ export class UndergroundScene extends Scene {
   }
 
   private distributeTroops() {
+    const grid = this.gridManager['grid'];
     // Reset all manned troops
-    this.grid.forEach((row, y) => {
+    grid.forEach((row, y) => {
         row.forEach((cell, x) => {
             if (cell && this.isDefense(cell) && this.buildingHealth[y][x]) {
                 this.buildingHealth[y][x]!.mannedTroops = 0;
@@ -1291,7 +1272,7 @@ export class UndergroundScene extends Scene {
 
     // Get all defenses and sort by priority (you can adjust the priority logic)
     const defenses: {x: number, y: number, type: DefenseType, required: number}[] = [];
-    this.grid.forEach((row, y) => {
+    grid.forEach((row, y) => {
         row.forEach((cell, x) => {
             if (cell && this.isDefense(cell)) {
                 const defenseType = cell as DefenseType;
