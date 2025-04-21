@@ -70,7 +70,7 @@ export class UndergroundScene extends Scene {
   private enemySpawnTimer: number = 0;
   private enemySpawnDelay: number = 2000; // 2 seconds between spawns
   private spawnedEnemiesCount: number = 0;
-  private resources: Resources = {
+  public resources: Resources = {
     troops: 0,
     maxTroops: 0,
     ammo: 0,
@@ -85,8 +85,12 @@ export class UndergroundScene extends Scene {
     observation: { range: 0, damage: 0, fireRate: 0, lastAttackTime: 0, troopsRequired: 1, ammoPerShot: 0 }
   };
   private attackGraphics: Phaser.GameObjects.Graphics;
-  private killCount: number = 0;
+  public killCount: number = 0;
   private frameCount: number = 0;
+  private resourceGenerationRates = {
+    troopsPerSecond: 1,   // Each barracks generates 1 troop per second
+    ammoPerSecond: 1      // Each ammo depot generates 1 ammo per second
+  };
 
   private colors: Record<BuildingType | DefenseType, number> = {
     // Underground buildings
@@ -144,9 +148,9 @@ export class UndergroundScene extends Scene {
     this.setupInteraction();
     this.setupZoomControls();
 
-    // Start resource generation
+    // Start resource generation with a timer
     this.time.addEvent({
-        delay: 1000,
+        delay: 1000, // Update every second
         callback: this.updateResources,
         callbackScope: this,
         loop: true
@@ -777,8 +781,9 @@ export class UndergroundScene extends Scene {
     // Increment kill count
     this.killCount++;
     
-    // Emit event with updated kill count
+    // Emit events for both kill count and resources
     this.events.emit('updateKillCount', this.killCount);
+    this.events.emit('updateResources', this.resources);
   }
 
   private createBuildingHealth(x: number, y: number, type: BuildingType | DefenseType) {
@@ -942,8 +947,8 @@ export class UndergroundScene extends Scene {
         this.grid[y][x] = null;
         this.drawGrid();
         
-        // Emit event to update resources immediately
-        this.events.emit('updateResources', this.resources);
+        // Update resources to recalculate max values
+        this.updateResources();
 
         Debug.log('Building destroyed', {
             category: 'combat',
@@ -984,6 +989,8 @@ export class UndergroundScene extends Scene {
                             if (this.resources.troops >= troopsRequired) {
                                 // Kill troops
                                 this.resources.troops -= troopsRequired;
+                                // Emit resource update after troops are killed
+                                this.events.emit('updateResources', this.resources);
                                 Debug.log('Troops killed', {
                                     category: 'combat',
                                     data: {
@@ -1007,47 +1014,6 @@ export class UndergroundScene extends Scene {
             }
         }
     });
-  }
-
-  private distributeTroops() {
-    // Reset all manned troops
-    this.grid.forEach((row, y) => {
-        row.forEach((cell, x) => {
-            if (cell && this.isDefense(cell) && this.buildingHealth[y][x]) {
-                this.buildingHealth[y][x]!.mannedTroops = 0;
-            }
-        });
-    });
-
-    // Get all defenses and sort by priority (you can adjust the priority logic)
-    const defenses: {x: number, y: number, type: DefenseType, required: number}[] = [];
-    this.grid.forEach((row, y) => {
-        row.forEach((cell, x) => {
-            if (cell && this.isDefense(cell)) {
-                const defenseType = cell as DefenseType;
-                defenses.push({
-                    x, y,
-                    type: defenseType,
-                    required: this.defenseProperties[defenseType].troopsRequired
-                });
-            }
-        });
-    });
-
-    // Sort defenses by required troops (highest first)
-    defenses.sort((a, b) => b.required - a.required);
-
-    // Distribute troops
-    let remainingTroops = this.resources.troops;
-    for (const defense of defenses) {
-        const building = this.buildingHealth[defense.y][defense.x];
-        if (building) {
-            const troopsToAssign = Math.min(remainingTroops, defense.required);
-            building.mannedTroops = troopsToAssign;
-            remainingTroops -= troopsToAssign;
-            this.updateBuildingText(defense.x, defense.y);
-        }
-    }
   }
 
   private handleDefenseAttacks(time: number) {
@@ -1097,6 +1063,8 @@ export class UndergroundScene extends Scene {
                         this.attackEnemy(defenseType, x, y, closestEnemy, time);
                         // Consume ammo
                         this.resources.ammo -= props.ammoPerShot;
+                        // Emit resource update after ammo is consumed
+                        this.events.emit('updateResources', this.resources);
                     }
                 }
             }
@@ -1228,11 +1196,6 @@ export class UndergroundScene extends Scene {
       this.lastCameraX = this.cameras.main.scrollX;
       this.lastCameraY = this.cameras.main.scrollY;
     }
-
-    // Update resources periodically (every 60 frames)
-    if (this.frameCount % 60 === 0) {
-      this.updateResources();
-    }
   }
 
   private updateResources() {
@@ -1254,15 +1217,36 @@ export class UndergroundScene extends Scene {
       }
     }
 
-    // Update resource values
-    // Only update money from command centers if there are any
+    // Update max capacities (10 per barracks, 25 per ammo depot)
+    this.resources.maxTroops = barracksCount * 10;
+    this.resources.maxAmmo = ammoCount * 25;
+
+    // Update money from command centers if there are any
     if (commandCount > 0) {
       this.resources.money = commandCount * 100;
+      this.resources.maxMoney = commandCount * 100;
     }
-    this.resources.ammo = ammoCount * 50;
-    this.resources.troops = barracksCount * 10;
+    
+    // Increment resources based on generation rates (1 per second per building)
+    if (barracksCount > 0) {
+      this.resources.troops = Math.min(
+        this.resources.maxTroops,
+        this.resources.troops + (this.resourceGenerationRates.troopsPerSecond * barracksCount)
+      );
+    }
+    
+    if (ammoCount > 0) {
+      this.resources.ammo = Math.min(
+        this.resources.maxAmmo,
+        this.resources.ammo + (this.resourceGenerationRates.ammoPerSecond * ammoCount)
+      );
+    }
+
+    // Distribute troops to defenses after updating resources
+    this.distributeTroops();
 
     // Emit event to update UI
+    console.log('Updating resources:', this.resources);
     this.events.emit('updateResources', this.resources);
   }
 
@@ -1293,4 +1277,45 @@ export class UndergroundScene extends Scene {
       });
     });
   }
-} 
+
+  private distributeTroops() {
+    // Reset all manned troops
+    this.grid.forEach((row, y) => {
+        row.forEach((cell, x) => {
+            if (cell && this.isDefense(cell) && this.buildingHealth[y][x]) {
+                this.buildingHealth[y][x]!.mannedTroops = 0;
+            }
+        });
+    });
+
+    // Get all defenses and sort by priority (you can adjust the priority logic)
+    const defenses: {x: number, y: number, type: DefenseType, required: number}[] = [];
+    this.grid.forEach((row, y) => {
+        row.forEach((cell, x) => {
+            if (cell && this.isDefense(cell)) {
+                const defenseType = cell as DefenseType;
+                defenses.push({
+                    x, y,
+                    type: defenseType,
+                    required: this.defenseProperties[defenseType].troopsRequired
+                });
+            }
+        });
+    });
+
+    // Sort defenses by required troops (highest first)
+    defenses.sort((a, b) => b.required - a.required);
+
+    // Distribute troops
+    let remainingTroops = this.resources.troops;
+    for (const defense of defenses) {
+        const building = this.buildingHealth[defense.y][defense.x];
+        if (building) {
+            const troopsToAssign = Math.min(remainingTroops, defense.required);
+            building.mannedTroops = troopsToAssign;
+            remainingTroops -= troopsToAssign;
+            this.updateBuildingText(defense.x, defense.y);
+        }
+    }
+  }
+}

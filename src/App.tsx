@@ -55,23 +55,56 @@ function App() {
     if (gameInstance) {
       const scene = gameInstance.scene.getScene('UndergroundScene') as UndergroundScene;
       if (scene) {
+        // Initialize resources from the scene
+        setResources(scene.resources); // Set initial resources from the scene
         scene.setSelectedBuilding(selectedBuilding);
-        
-        // Set up event listeners for resources and kill count updates
-        scene.events.on('updateResources', (newResources: any) => {
-          setResources(newResources);
-        });
-        
-        scene.events.on('updateKillCount', (newKillCount: number) => {
-          setKillCount(newKillCount);
-        });
-        
-        scene.events.on('waveStateChanged', (active: boolean) => {
-          setIsWaveActive(active);
-        });
       }
     }
   }, [selectedBuilding, gameInstance]);
+
+  // Set up event listeners once when the game instance is created
+  useEffect(() => {
+    if (gameInstance) {
+      const scene = gameInstance.scene.getScene('UndergroundScene') as UndergroundScene;
+      if (scene) {
+        // Ensure the scene is ready before setting up event listeners
+        scene.events.once('ready', () => {
+          const handleUpdateResources = (newResources: any) => {
+            console.log('Resources updated:', newResources); // Debug log
+            setResources({ ...newResources }); // This creates a new object reference
+          };
+
+          const handleUpdateKillCount = (newKillCount: number) => {
+            console.log('Kill count updated:', newKillCount); // Debug log
+            setKillCount(newKillCount);
+          };
+
+          const handleWaveStateChanged = (active: boolean) => {
+            console.log('Wave state changed:', active); // Debug log
+            setIsWaveActive(active);
+          };
+
+          // Set up event listeners
+          scene.events.on('updateResources', handleUpdateResources);
+          scene.events.on('updateKillCount', handleUpdateKillCount);
+          scene.events.on('waveStateChanged', handleWaveStateChanged);
+
+          // Emit initial resource update to ensure UI reflects the current state
+          console.log('Emitting initial resources:', scene.resources); // Debug log
+          scene.events.emit('updateResources', scene.resources);
+          console.log('Emitting initial kill count:', scene.killCount); // Debug log
+          scene.events.emit('updateKillCount', scene.killCount);
+
+          // Clean up event listeners when component unmounts
+          return () => {
+            scene.events.off('updateResources', handleUpdateResources);
+            scene.events.off('updateKillCount', handleUpdateKillCount);
+            scene.events.off('waveStateChanged', handleWaveStateChanged);
+          };
+        });
+      }
+    }
+  }, [gameInstance]);
 
   const handleStartWave = () => {
     if (gameInstance) {
@@ -97,4 +130,4 @@ function App() {
   );
 }
 
-export default App; 
+export default App;

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 type BuildingType = 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
 type DefenseType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
@@ -6,6 +6,8 @@ type DefenseType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
 interface BuildingSelectorProps {
   onSelectBuilding: (type: BuildingType | DefenseType) => void;
   selectedBuilding: BuildingType | DefenseType;
+  onStartWave: () => void;
+  isWaveActive: boolean;
   resources: {
     money: number;
     maxMoney: number;
@@ -15,8 +17,6 @@ interface BuildingSelectorProps {
     maxAmmo: number;
   };
   killCount: number;
-  onStartWave: () => void;
-  isWaveActive: boolean;
 }
 
 const buildings: { type: BuildingType | DefenseType; name: string; color: string; category: 'underground' | 'defense' }[] = [
@@ -36,11 +36,20 @@ const buildings: { type: BuildingType | DefenseType; name: string; color: string
 export const BuildingSelector: React.FC<BuildingSelectorProps> = ({
   onSelectBuilding,
   selectedBuilding,
-  resources,
-  killCount,
   onStartWave,
-  isWaveActive
+  isWaveActive,
+  resources,
+  killCount
 }) => {
+  console.log('Rendering BuildingSelector with props:', {
+    selectedBuilding,
+    resources,
+    killCount,
+    isWaveActive
+  });
+
+  console.log('Passing resources to BuildingSelector:', resources);
+
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-gray-800 p-4 border-t-2 border-gray-700">
       <div className="max-w-4xl mx-auto">
@@ -124,4 +133,4 @@ export const BuildingSelector: React.FC<BuildingSelectorProps> = ({
       </div>
     </div>
   );
-}; 
+};
