@@ -300,4 +300,8 @@ export class EnemyManager {
     });
     this.enemies = [];
   }
+
+  public getEnemies(): Enemy[] {
+    return this.enemies;
+  }
 } 

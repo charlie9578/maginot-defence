@@ -317,7 +317,7 @@ export class UndergroundScene extends Scene {
     
     if (newZoom !== this.currentZoom) {
       // Store current grid positions of enemies
-      const enemyGridPositions = this.enemies.map(enemy => ({
+      const enemyGridPositions = this.enemyManager.getEnemies().map(enemy => ({
         enemy,
         gridX: enemy.gridX
       }));
