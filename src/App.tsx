@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import Phaser from 'phaser';
 import { UndergroundScene } from './scenes/UndergroundScene';
 import { BuildingSelector } from './components/BuildingSelector';
+import { Resources } from './managers/ResourceManager';
 
 // Update BuildingType to match what's expected by UndergroundScene
 type BuildingType = 'ammo' | 'barracks' | 'command' | 'elevator' | 'tunnel';
@@ -11,7 +12,7 @@ type BuildingTypeOrDefense = BuildingType | DefenseType;
 function App() {
   const [selectedBuilding, setSelectedBuilding] = useState<BuildingTypeOrDefense>('tunnel');
   const [gameInstance, setGameInstance] = useState<Phaser.Game | null>(null);
-  const [resources, setResources] = useState({
+  const [resources, setResources] = useState<Resources>({
     money: 0,
     maxMoney: 0,
     troops: 0,
@@ -55,9 +56,7 @@ function App() {
     if (gameInstance) {
       const scene = gameInstance.scene.getScene('UndergroundScene') as UndergroundScene;
       if (scene) {
-        // Initialize resources from the scene
-        setResources(scene.resources); // Set initial resources from the scene
-        setKillCount(scene.killCount); // Set initial kill count from the scene
+        // Set the selected building in the scene
         scene.setSelectedBuilding(selectedBuilding);
       }
     }
@@ -70,7 +69,7 @@ function App() {
       if (scene) {
         // Ensure the scene is ready before setting up event listeners
         scene.events.once('ready', () => {
-          const handleUpdateResources = (newResources: any) => {
+          const handleUpdateResources = (newResources: Resources) => {
             console.log('Resources updated:', newResources); // Debug log
             setResources({ ...newResources }); // This creates a new object reference
           };
@@ -89,12 +88,6 @@ function App() {
           scene.events.on('updateResources', handleUpdateResources);
           scene.events.on('updateKillCount', handleUpdateKillCount);
           scene.events.on('waveStateChanged', handleWaveStateChanged);
-
-          // Emit initial resource update to ensure UI reflects the current state
-          console.log('Emitting initial resources:', scene.resources); // Debug log
-          scene.events.emit('updateResources', scene.resources);
-          console.log('Emitting initial kill count:', scene.killCount); // Debug log
-          scene.events.emit('updateKillCount', scene.killCount);
 
           // Clean up event listeners when component unmounts
           return () => {

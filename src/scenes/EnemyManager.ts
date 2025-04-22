@@ -1,6 +1,8 @@
 import { Scene } from 'phaser';
 import { GridManager } from './GridManager';
+import { BuildingManager } from '../managers/BuildingManager';
 import { DefenseType } from '../types/grid';
+import { Debug } from '../utils/Debug';
 
 // Define Enemy and Resources interfaces
 interface Enemy {
@@ -33,6 +35,7 @@ interface Resources {
 export class EnemyManager {
   private scene: Scene;
   private gridManager: GridManager;
+  private buildingManager: BuildingManager;
   private resources: Resources;
   private enemies: Enemy[] = [];
   private isWaveActive: boolean = false;
@@ -42,88 +45,89 @@ export class EnemyManager {
   private enemySpawnDelay: number = 2000; // 2 seconds between spawns
   private spawnedEnemiesCount: number = 0;
 
-  constructor(scene: Scene, gridManager: GridManager, resources: Resources) {
+  constructor(
+    scene: Scene, 
+    gridManager: GridManager, 
+    buildingManager: BuildingManager,
+    resources: Resources
+  ) {
     this.scene = scene;
     this.gridManager = gridManager;
+    this.buildingManager = buildingManager;
     this.resources = resources;
   }
 
   public update(time: number, delta: number) {
-    if (this.isWaveActive) {
+    if (!this.isWaveActive) return;
+
+    // Handle enemy spawning
+    if (this.spawnedEnemiesCount < this.enemiesPerWave) {
       this.enemySpawnTimer += delta;
-      if (this.enemySpawnTimer >= this.enemySpawnDelay && 
-          this.spawnedEnemiesCount < this.enemiesPerWave) {
+      if (this.enemySpawnTimer >= this.enemySpawnDelay) {
         this.spawnEnemy();
         this.enemySpawnTimer = 0;
       }
-
-      this.enemies.forEach((enemy, index) => {
-        enemy.gridX += (enemy.speed * delta) / (1000 * (this.scene as any).cellSize);
-        enemy.x = (this.scene as any).gridToWorldX(Math.floor(enemy.gridX));
-        enemy.sprite.x = enemy.x;
-        enemy.healthBar.background.x = enemy.x;
-        enemy.healthBar.bar.x = enemy.x;
-
-        if (enemy.gridX >= this.gridManager['grid'][0].length) {
-          this.destroyEnemy(index);
-        }
-      });
-
-      this.handleEnemyAttacks(time);
-      this.handleDefenseAttacks(time);
     }
+
+    // Handle enemy movement and attacks
+    this.enemies.forEach((enemy, index) => {
+      // Move enemy to the right
+      enemy.x += enemy.speed * (delta / 1000);
+      enemy.gridX = enemy.x / this.gridManager['cellSize'];
+      enemy.sprite.x = enemy.x;
+      enemy.healthBar.background.x = enemy.x;
+      enemy.healthBar.bar.x = enemy.x;
+
+      // Check if enemy reached the right edge
+      const grid = this.gridManager['grid'];
+      if (enemy.x >= grid[0].length * this.gridManager['cellSize']) {
+        this.destroyEnemy(index);
+        return;
+      }
+
+      // Check for collisions with buildings
+      const gridX = Math.floor(enemy.gridX);
+      const gridY = Math.floor(grid.length / 2);
+
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const targetX = gridX + dx;
+          const targetY = gridY + dy;
+
+          if (targetX >= 0 && targetX < grid[0].length &&
+              targetY >= 0 && targetY < grid.length &&
+              grid[targetY][targetX]) {
+            enemy.x = targetX * this.gridManager['cellSize'];
+            enemy.gridX = targetX;
+            enemy.sprite.x = enemy.x;
+            enemy.healthBar.background.x = enemy.x;
+            enemy.healthBar.bar.x = enemy.x;
+          }
+        }
+      }
+    });
+
+    // Handle enemy attacks
+    this.handleEnemyAttacks(time);
   }
 
   private spawnEnemy() {
     const grid = this.gridManager['grid'];
-    const groundLevel = Math.floor(grid.length / 2);
-    const worldX = (this.scene as any).gridToWorldX(0);
-    const worldY = groundLevel * (this.scene as any).cellSize + (this.scene as any).cellSize / 2;
-    const health = 50 * this.waveNumber;
-
-    const enemySprite = this.scene.add.rectangle(
-      worldX,
-      worldY,
-      30,
-      30,
-      0xff0000
-    )
-    .setDepth(50)
-    .setScrollFactor(1)
-    .setStrokeStyle(2, 0x000000);
-
-    const healthBarBg = this.scene.add.rectangle(
-      worldX,
-      worldY - 20,
-      32,
-      5,
-      0x000000
-    )
-    .setDepth(50)
-    .setScrollFactor(1);
-
-    const healthBar = this.scene.add.rectangle(
-      worldX,
-      worldY - 20,
-      32,
-      5,
-      0x00ff00
-    )
-    .setDepth(51)
-    .setScrollFactor(1);
+    const spawnX = 0; // Spawn on the left side
+    const spawnY = Math.floor(grid.length / 2) * this.gridManager['cellSize'];
 
     const enemy: Enemy = {
-      sprite: enemySprite,
-      healthBar: {
-        background: healthBarBg,
-        bar: healthBar
-      },
-      health: health,
-      maxHealth: health,
+      sprite: this.scene.add.rectangle(spawnX, spawnY, 30, 30, 0xff0000),
+      health: 100,
+      maxHealth: 100,
       speed: 50,
-      gridX: 0,
-      x: worldX,
-      y: worldY,
+      gridX: 0, // Start at the left edge
+      x: spawnX,
+      y: spawnY,
+      healthBar: {
+        background: this.scene.add.rectangle(spawnX, spawnY - 20, 30, 5, 0x000000),
+        bar: this.scene.add.rectangle(spawnX, spawnY - 20, 30, 5, 0x00ff00)
+      },
       damage: 10,
       attackRange: 1,
       lastAttackTime: 0,
@@ -163,18 +167,18 @@ export class EnemyManager {
             const building = grid[targetY][targetX];
 
             if (time - enemy.lastAttackTime >= enemy.attackCooldown) {
-              if ((this.scene as any).isDefense(building)) {
+              if (this.buildingManager.isDefense(building)) {
                 const defenseType = building as DefenseType;
-                const troopsRequired = (this.scene as any).defenseProperties[defenseType].troopsRequired;
+                const troopsRequired = this.buildingManager.getDefenseProperties(defenseType).troopsRequired;
 
                 if (this.resources.troops >= troopsRequired) {
                   this.resources.troops -= troopsRequired;
                   this.scene.events.emit('updateResources', this.resources);
                 } else {
-                  (this.scene as any).damageBuilding(targetX, targetY, enemy.damage);
+                  this.buildingManager.damageBuilding(targetX, targetY, enemy.damage);
                 }
               } else {
-                (this.scene as any).damageBuilding(targetX, targetY, enemy.damage);
+                this.buildingManager.damageBuilding(targetX, targetY, enemy.damage);
               }
 
               enemy.lastAttackTime = time;
@@ -193,38 +197,18 @@ export class EnemyManager {
     for (let y = 0; y <= groundLevel; y++) {
       for (let x = 0; x < grid[0].length; x++) {
         const cell = grid[y][x];
-        if (cell && (this.scene as any).isDefense(cell)) {
+        if (cell && this.buildingManager.isDefense(cell)) {
           const defenseType = cell as DefenseType;
-          const props = (this.scene as any).defenseProperties[defenseType];
-          const building = (this.scene as any).buildingHealth[y][x];
+          const props = this.buildingManager.getDefenseProperties(defenseType);
+          const building = this.buildingManager.getBuildingHealth(y, x);
 
-          if (!building || !building.mannedTroops || building.mannedTroops < props.troopsRequired) {
-            continue;
-          }
-
-          if (defenseType === 'observation') continue;
-
-          if (this.resources.ammo < props.ammoPerShot) {
-            continue;
-          }
-
-          if (time - props.lastAttackTime >= props.fireRate) {
-            let closestEnemy: Enemy | null = null;
-            let closestDistance = props.range;
-
+          if (building && building.mannedTroops && building.mannedTroops > 0) {
             this.enemies.forEach(enemy => {
               const distance = Math.abs(enemy.gridX - x);
-              if (distance <= props.range && (!closestEnemy || distance < closestDistance)) {
-                closestEnemy = enemy;
-                closestDistance = distance;
+              if (distance <= props.range && time - props.lastAttackTime >= props.fireRate) {
+                this.attackEnemy(defenseType, x, y, enemy, time);
               }
             });
-
-            if (closestEnemy) {
-              this.attackEnemy(defenseType, x, y, closestEnemy, time);
-              this.resources.ammo -= props.ammoPerShot;
-              this.scene.events.emit('updateResources', this.resources);
-            }
           }
         }
       }
@@ -232,73 +216,53 @@ export class EnemyManager {
   }
 
   private attackEnemy(defenseType: DefenseType, defenseX: number, defenseY: number, enemy: Enemy, time: number) {
-    const props = (this.scene as any).defenseProperties[defenseType];
-    const defenseWorldX = (this.scene as any).gridToWorldX(defenseX);
-    const defenseWorldY = defenseY * (this.scene as any).cellSize + (this.scene as any).cellSize / 2;
+    const props = this.buildingManager.getDefenseProperties(defenseType);
+    const building = this.buildingManager.getBuildingHealth(defenseY, defenseX);
 
-    const projectile = this.scene.add.graphics();
-    projectile.lineStyle(4, 0xff0000, 1);
+    if (!building || !building.mannedTroops || building.mannedTroops <= 0) return;
 
-    const startX = defenseWorldX;
-    const startY = defenseWorldY;
-    const endX = enemy.x;
-    const endY = enemy.y;
+    if (this.resources.ammo >= props.ammoPerShot) {
+      this.resources.ammo -= props.ammoPerShot;
+      this.scene.events.emit('updateResources', this.resources);
 
-    projectile.lineBetween(startX, startY, endX, endY);
+      // Draw attack line
+      const startX = defenseX * this.gridManager['cellSize'] + this.gridManager['cellSize'] / 2;
+      const startY = defenseY * this.gridManager['cellSize'] + this.gridManager['cellSize'] / 2;
+      const endX = enemy.x + this.gridManager['cellSize'] / 2;
+      const endY = enemy.y + this.gridManager['cellSize'] / 2;
 
-    const glow = this.scene.add.graphics();
-    glow.lineStyle(8, 0xff0000, 0.3);
-    glow.lineBetween(startX, startY, endX, endY);
+      (this.scene as any).attackGraphics.lineStyle(2, 0xff0000);
+      (this.scene as any).attackGraphics.lineBetween(startX, startY, endX, endY);
 
-    const duration = 500;
-    this.scene.tweens.add({
-      targets: [projectile, glow],
-      alpha: 0,
-      duration: duration,
-      onComplete: () => {
-        projectile.destroy();
-        glow.destroy();
-        enemy.health -= props.damage;
+      // Apply damage
+      enemy.health -= props.damage;
+      const healthPercent = enemy.health / enemy.maxHealth;
+      enemy.healthBar.bar.width = 30 * healthPercent;
+      enemy.healthBar.bar.x = enemy.x + (30 * (1 - healthPercent)) / 2;
 
-        const healthPercent = enemy.health / enemy.maxHealth;
-        enemy.healthBar.bar.width = 32 * healthPercent;
-        enemy.healthBar.bar.setFillStyle(healthPercent > 0.5 ? 0x00ff00 : healthPercent > 0.25 ? 0xffff00 : 0xff0000);
-
-        if (enemy.health <= 0) {
-          const index = this.enemies.indexOf(enemy);
-          if (index !== -1) {
-            this.destroyEnemy(index);
-          }
+      if (enemy.health <= 0) {
+        const index = this.enemies.indexOf(enemy);
+        if (index !== -1) {
+          this.destroyEnemy(index);
         }
       }
-    });
 
-    props.lastAttackTime = time;
+      props.lastAttackTime = time;
+    }
   }
 
   public startWave() {
-    console.log('Starting wave', {
-      category: 'enemy',
-      data: {
-        waveNumber: this.waveNumber,
-        enemiesPerWave: this.enemiesPerWave
-      }
-    });
-
-    this.isWaveActive = true;
-    this.enemySpawnTimer = 0;
-    this.spawnedEnemiesCount = 0;
-
-    // Emit event for wave state change
-    this.scene.events.emit('waveStateChanged', this.isWaveActive);
-
-    // Clear any remaining enemies
-    this.enemies.forEach(enemy => {
-      enemy.sprite.destroy();
-      enemy.healthBar.background.destroy();
-      enemy.healthBar.bar.destroy();
-    });
-    this.enemies = [];
+    if (!this.isWaveActive) {
+      this.isWaveActive = true;
+      this.spawnedEnemiesCount = 0;
+      this.enemySpawnTimer = 0;
+      this.waveNumber++;
+      this.enemiesPerWave = 10 + (this.waveNumber - 1) * 2;
+      Debug.log('Starting wave', {
+        category: 'combat',
+        data: { waveNumber: this.waveNumber, enemiesPerWave: this.enemiesPerWave }
+      });
+    }
   }
 
   public getEnemies(): Enemy[] {

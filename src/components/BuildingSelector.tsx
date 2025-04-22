@@ -82,7 +82,7 @@ export const BuildingSelector: React.FC<BuildingSelectorProps> = ({
     <div className="fixed bottom-0 left-0 right-0 bg-gray-800 p-4 border-t-2 border-gray-700">
       <div className="max-w-4xl mx-auto">
         {/* Resource display moved to ResourcePanel */}
-        <ResourcePanel resources={resources} killCount={killCount} />
+        <ResourcePanel resources={currentResources} killCount={currentKillCount} />
 
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center gap-4">
