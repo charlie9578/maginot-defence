@@ -111,7 +111,7 @@ export class EnemyManager {
     this.handleEnemyAttacks(time);
   }
 
-  private spawnEnemy() {
+  public spawnEnemy() {
     const grid = this.gridManager['grid'];
     const spawnX = 0; // Spawn on the left side
     const spawnY = Math.floor(grid.length / 2) * this.gridManager['cellSize'];
@@ -138,7 +138,7 @@ export class EnemyManager {
     this.spawnedEnemiesCount++;
   }
 
-  private destroyEnemy(index: number) {
+  public destroyEnemy(index: number) {
     const enemy = this.enemies[index];
     enemy.sprite.destroy();
     enemy.healthBar.background.destroy();

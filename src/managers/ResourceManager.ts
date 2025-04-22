@@ -16,7 +16,7 @@ export interface Resources {
 export class ResourceManager {
   private scene: Scene;
   private gridManager: GridManager;
-  private buildingManager: BuildingManager;
+  private buildingManager: BuildingManager | null;
   public resources: Resources = {
     troops: 0,
     maxTroops: 0,
@@ -30,13 +30,15 @@ export class ResourceManager {
     ammoPerSecond: 1      // Each ammo depot generates 1 ammo per second
   };
 
-  constructor(scene: Scene, gridManager: GridManager, buildingManager: BuildingManager) {
+  constructor(scene: Scene, gridManager: GridManager, buildingManager: BuildingManager | null) {
     this.scene = scene;
     this.gridManager = gridManager;
     this.buildingManager = buildingManager;
   }
 
   public updateResources() {
+    if (!this.buildingManager) return;
+
     const grid = this.gridManager['grid'];
     // Count resource buildings
     let barracksCount = 0;
@@ -82,7 +84,9 @@ export class ResourceManager {
     }
 
     // Distribute troops to defenses after updating resources
-    this.buildingManager.distributeTroops();
+    if (this.buildingManager) {
+      this.buildingManager.distributeTroops();
+    }
 
     // Emit event to update UI
     Debug.log('Updating resources', {
@@ -142,5 +146,18 @@ export class ResourceManager {
       return true;
     }
     return false;
+  }
+
+  public consumeResources(resourceCost: Partial<Resources>) {
+    if (resourceCost.money) {
+      this.resources.money = Math.max(0, this.resources.money - resourceCost.money);
+    }
+    if (resourceCost.troops) {
+      this.resources.troops = Math.max(0, this.resources.troops - resourceCost.troops);
+    }
+    if (resourceCost.ammo) {
+      this.resources.ammo = Math.max(0, this.resources.ammo - resourceCost.ammo);
+    }
+    this.scene.events.emit('updateResources', this.resources);
   }
 } 

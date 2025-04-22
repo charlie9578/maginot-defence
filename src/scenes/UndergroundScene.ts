@@ -6,6 +6,9 @@ import { GridManager } from './GridManager';
 import { EnemyManager } from './EnemyManager';
 import { ResourceManager } from '../managers/ResourceManager';
 import { BuildingManager } from '../managers/BuildingManager';
+import { CameraManager } from '../managers/CameraManager';
+import { GameStateManager } from '../managers/GameStateManager';
+import { UIManager } from '../managers/UIManager';
 
 type DefenseType = 'bunker' | 'artillery' | 'machinegun' | 'observation';
 type CellContent = BuildingType | DefenseType | null;
@@ -54,6 +57,9 @@ export class UndergroundScene extends Scene {
   private enemyManager!: EnemyManager;
   private resourceManager!: ResourceManager;
   private buildingManager!: BuildingManager;
+  private cameraManager!: CameraManager;
+  private gameStateManager!: GameStateManager;
+  private uiManager!: UIManager;
 
   // Building properties
   private colors: Record<BuildingType | DefenseType, number> = {
@@ -124,24 +130,42 @@ export class UndergroundScene extends Scene {
       return;
     }
 
-    // Initialize BuildingManager
+    // Initialize managers in the correct order to avoid circular dependencies
+    this.resourceManager = new ResourceManager(this, this.gridManager, null);
     this.buildingManager = new BuildingManager(
       this, 
       this.gridManager, 
-      null, // Will be set after ResourceManager is created
+      this.resourceManager,
       this.cellSize,
       this.colors,
       this.buildingCosts,
       this.defenseProperties
     );
     this.buildingManager.initialize();
-    this.buildingManager.setupInteraction();
-
-    // Initialize ResourceManager
-    this.resourceManager = new ResourceManager(this, this.gridManager, this.buildingManager);
     
-    // Set the resourceManager in the buildingManager
-    this.buildingManager['resourceManager'] = this.resourceManager;
+    // Now that both managers exist, set up their references to each other
+    this.resourceManager['buildingManager'] = this.buildingManager;
+
+    // Initialize EnemyManager after both managers are set up
+    this.enemyManager = new EnemyManager(
+      this, 
+      this.gridManager, 
+      this.buildingManager,
+      this.resourceManager.resources
+    );
+
+    // Initialize UI Manager
+    this.uiManager = new UIManager(this, this.buildingManager);
+
+    // Initialize Camera Manager
+    this.cameraManager = new CameraManager(this);
+    this.cameraManager.setupControls();
+
+    // Initialize Game State Manager
+    this.gameStateManager = new GameStateManager(this);
+
+    // Setup building interaction
+    this.buildingManager.setupInteraction();
 
     // Start resource generation with a timer
     this.time.addEvent({
@@ -166,18 +190,9 @@ export class UndergroundScene extends Scene {
     this.resourceManager.updateResources();
     this.frameCount = 0;
 
-    // Initialize EnemyManager
-    this.enemyManager = new EnemyManager(
-      this, 
-      this.gridManager, 
-      this.buildingManager,
-      this.resourceManager.resources
-    );
-
     // Add event listener for kill count update
     this.events.on('updateKillCount', (newKillCount: number) => {
-      console.log('Kill count updated:', newKillCount);
-      // Update UI or handle logic here
+      this.killCount = newKillCount;
     });
 
     this.setupZoomControls();
@@ -186,6 +201,9 @@ export class UndergroundScene extends Scene {
   private handleResize(gameSize: Phaser.Structs.Size) {
     this.gridManager.initializeGrid();
     this.gridManager.drawGrid();
+    this.uiManager.handleResize();
+    this.cameraManager.handleResize();
+    this.buildingManager.updateAllBuildingHealthPositions();
   }
 
   public setSelectedBuilding(type: BuildingType | DefenseType) {
@@ -307,30 +325,37 @@ export class UndergroundScene extends Scene {
 
   private worldToGridX(worldX: number): number {
     const grid = this.gridManager['grid'];
-    const offsetX = (this.scale.width / this.currentZoom - grid[0].length * this.cellSize) / 2;
+    const offsetX = (this.scale.width / this.cameraManager.getCurrentZoom() - grid[0].length * this.cellSize) / 2;
     return Math.floor((worldX - offsetX) / this.cellSize);
   }
 
   private gridToWorldX(gridX: number): number {
     const grid = this.gridManager['grid'];
-    const offsetX = (this.scale.width / this.currentZoom - grid[0].length * this.cellSize) / 2;
+    const offsetX = (this.scale.width / this.cameraManager.getCurrentZoom() - grid[0].length * this.cellSize) / 2;
     return offsetX + (gridX * this.cellSize) + (this.cellSize / 2);
   }
 
   update(time: number, delta: number) {
     this.enemyManager.update(time, delta);
+    this.buildingManager.update(time, delta);
+    this.gameStateManager.update();
+    this.uiManager.update();
     this.frameCount++;
     
     // Update building health positions when camera moves
-    if (this.cameras.main.scrollX !== this.lastCameraX || this.cameras.main.scrollY !== this.lastCameraY) {
+    const lastPos = this.cameraManager.getLastCameraPosition();
+    if (this.cameras.main.scrollX !== lastPos.x || this.cameras.main.scrollY !== lastPos.y) {
       this.buildingManager.updateAllBuildingHealthPositions();
-      this.lastCameraX = this.cameras.main.scrollX;
-      this.lastCameraY = this.cameras.main.scrollY;
+      this.cameraManager.updateLastCameraPosition(
+        this.cameras.main.scrollX,
+        this.cameras.main.scrollY
+      );
     }
   }
 
   // Add a method to start a wave using EnemyManager
   public startWave() {
     this.enemyManager.startWave();
+    this.gameStateManager.setWaveActive(true);
   }
 }

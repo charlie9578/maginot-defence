@@ -2,6 +2,7 @@ import { Scene } from 'phaser';
 import { GridManager } from '../scenes/GridManager';
 import { BuildingType, DefenseType, BUILDINGS, UndergroundType } from '../types/grid';
 import { Debug } from '../utils/Debug';
+import { ResourceManager } from '../managers/ResourceManager';
 
 interface BuildingHealth {
   health: number;
@@ -36,18 +37,19 @@ interface DefenseProperties {
 export class BuildingManager {
   private scene: Scene;
   private gridManager: GridManager;
-  private resourceManager: any; // Will be properly typed when ResourceManager is created
+  private resourceManager: ResourceManager | null;
   private buildingHealth: (BuildingHealth | null)[][] = [];
   private selectedBuilding: BuildingType | DefenseType = 'tunnel';
   private cellSize: number;
   private colors: Record<BuildingType | DefenseType, number>;
   private buildingCosts: Record<BuildingType | DefenseType, number>;
   private defenseProperties: Record<DefenseType, DefenseProperties>;
+  private resources: Resources;
 
   constructor(
-    scene: Scene, 
-    gridManager: GridManager, 
-    resourceManager: any,
+    scene: Scene,
+    gridManager: GridManager,
+    resourceManager: ResourceManager | null,
     cellSize: number,
     colors: Record<BuildingType | DefenseType, number>,
     buildingCosts: Record<BuildingType | DefenseType, number>,
@@ -60,6 +62,14 @@ export class BuildingManager {
     this.colors = colors;
     this.buildingCosts = buildingCosts;
     this.defenseProperties = defenseProperties;
+    this.resources = {
+      money: 0,
+      maxMoney: 0,
+      troops: 0,
+      maxTroops: 0,
+      ammo: 0,
+      maxAmmo: 0
+    };
   }
 
   public initialize() {
@@ -141,9 +151,12 @@ export class BuildingManager {
         const previousContent = grid[y][x];
         grid[y][x] = this.selectedBuilding;
         
-        this.resourceManager.resources.money -= this.buildingCosts[this.selectedBuilding];
+        if (this.resourceManager) {
+          this.resourceManager.resources.money -= this.buildingCosts[this.selectedBuilding];
+          this.scene.events.emit('updateResources', this.resourceManager.resources);
+        }
+        
         this.createBuildingHealth(x, y, this.selectedBuilding);
-        this.scene.events.emit('updateResources', this.resourceManager.resources);
         
         Debug.log('Building placed successfully', {
           category: 'building',
@@ -151,7 +164,7 @@ export class BuildingManager {
             type: this.selectedBuilding,
             position: { x, y },
             cost: this.buildingCosts[this.selectedBuilding],
-            remainingMoney: this.resourceManager.resources.money
+            remainingMoney: this.resourceManager?.resources.money
           }
         });
 
@@ -162,7 +175,7 @@ export class BuildingManager {
 
   private canBuildAt(x: number, y: number): boolean {
     const grid = this.gridManager['grid'];
-    if (y < 0 || y >= grid.length || x < 0 || x >= grid[0].length) {
+    if (x < 0 || x >= grid[0].length || y < 0 || y >= grid.length) {
       return false;
     }
 
@@ -171,10 +184,22 @@ export class BuildingManager {
       return false;
     }
 
+    // Check if resourceManager exists and has enough money
+    if (!this.resourceManager?.resources?.money) {
+      Debug.log('Not enough money to build', {
+        category: 'building',
+        data: {
+          building: this.selectedBuilding,
+          cost: this.buildingCosts[this.selectedBuilding],
+          available: 0
+        }
+      });
+      return false;
+    }
+
     if (this.resourceManager.resources.money < this.buildingCosts[this.selectedBuilding]) {
       Debug.log('Not enough money to build', {
         category: 'building',
-        level: 'warn',
         data: {
           building: this.selectedBuilding,
           cost: this.buildingCosts[this.selectedBuilding],
@@ -428,40 +453,35 @@ export class BuildingManager {
     }
   }
 
-  public destroyBuilding(x: number, y: number) {
+  public destroyBuilding(x: number, y: number): boolean {
     const grid = this.gridManager['grid'];
-    const building = grid[y][x];
-    if (building) {
-        // Remove health bars and text
-        if (this.buildingHealth[y][x]) {
-            this.buildingHealth[y][x].healthBar.background.destroy();
-            this.buildingHealth[y][x].healthBar.bar.destroy();
-            this.buildingHealth[y][x].healthText?.destroy();
-            this.buildingHealth[y][x].troopText?.destroy();
-            this.buildingHealth[y][x] = null;
-        }
-
-        // If it's a defense, remove troops
-        if (this.isDefense(building)) {
-            const defenseType = building as DefenseType;
-            this.resourceManager.resources.troops -= this.defenseProperties[defenseType].troopsRequired;
-        }
-
-        // Remove building
-        grid[y][x] = null;
-        this.gridManager.drawGrid();
-        
-        // Update resources to recalculate max values
-        this.resourceManager.updateResources();
-
-        Debug.log('Building destroyed', {
-            category: 'combat',
-            data: {
-                type: building,
-                position: { x, y }
-            }
-        });
+    if (!grid[y] || !grid[y][x] || grid[y][x] === null) {
+      return false;
     }
+
+    const building = grid[y][x];
+    if (this.isDefense(building)) {
+      const defenseType = building as DefenseType;
+      if (this.resourceManager) {
+        this.resourceManager.resources.troops += this.defenseProperties[defenseType].troopsRequired;
+      }
+    }
+
+    grid[y][x] = null;
+    this.buildingHealth[y][x] = null;
+    
+    // Update resources to recalculate max values
+    if (this.resourceManager) {
+      this.resourceManager.updateResources();
+    }
+
+    Debug.log('Building destroyed', {
+      category: 'building',
+      data: {
+        position: { x, y }
+      }
+    });
+    return true;
   }
 
   public isDefense(type: BuildingType | DefenseType): type is DefenseType {
@@ -515,43 +535,40 @@ export class BuildingManager {
 
   public distributeTroops() {
     const grid = this.gridManager['grid'];
-    // Reset all manned troops
-    grid.forEach((row, y) => {
-        row.forEach((cell, x) => {
-            if (cell && this.isDefense(cell) && this.buildingHealth[y][x]) {
-                this.buildingHealth[y][x]!.mannedTroops = 0;
-            }
-        });
-    });
+    const defenses: { x: number; y: number; type: DefenseType }[] = [];
 
-    // Get all defenses and sort by priority (you can adjust the priority logic)
-    const defenses: {x: number, y: number, type: DefenseType, required: number}[] = [];
-    grid.forEach((row, y) => {
-        row.forEach((cell, x) => {
-            if (cell && this.isDefense(cell)) {
-                const defenseType = cell as DefenseType;
-                defenses.push({
-                    x, y,
-                    type: defenseType,
-                    required: this.defenseProperties[defenseType].troopsRequired
-                });
-            }
-        });
-    });
-
-    // Sort defenses by required troops (highest first)
-    defenses.sort((a, b) => b.required - a.required);
+    // Find all defenses
+    for (let y = 0; y < grid.length; y++) {
+      for (let x = 0; x < grid[0].length; x++) {
+        const cell = grid[y][x];
+        if (cell && this.isDefense(cell)) {
+          defenses.push({ x, y, type: cell as DefenseType });
+        }
+      }
+    }
 
     // Distribute troops
-    let remainingTroops = this.resourceManager.resources.troops;
+    let remainingTroops = this.resourceManager?.resources.troops || 0;
     for (const defense of defenses) {
+      const building = this.buildingHealth[defense.y][defense.x];
+      if (building) {
+        building.mannedTroops = building.mannedTroops || 0;
+      }
+    }
+
+    // Distribute troops evenly
+    while (remainingTroops > 0) {
+      let distributed = false;
+      for (const defense of defenses) {
         const building = this.buildingHealth[defense.y][defense.x];
-        if (building) {
-            const troopsToAssign = Math.min(remainingTroops, defense.required);
-            building.mannedTroops = troopsToAssign;
-            remainingTroops -= troopsToAssign;
-            this.updateBuildingText(defense.x, defense.y);
+        if (building && building.mannedTroops !== undefined && 
+            building.mannedTroops < this.defenseProperties[defense.type].troopsRequired) {
+          building.mannedTroops++;
+          remainingTroops--;
+          distributed = true;
         }
+      }
+      if (!distributed) break;
     }
   }
 
@@ -564,5 +581,55 @@ export class BuildingManager {
   public update(time: number, delta: number) {
     // Update building-related logic here
     // For example, update building animations, effects, etc.
+  }
+
+  public getResources(): Resources {
+    return this.resources;
+  }
+
+  public consumeResources(resourceCost: Partial<Resources>) {
+    if (this.resourceManager) {
+      this.resourceManager.consumeResources(resourceCost);
+    }
+  }
+
+  public placeBuilding(x: number, y: number): boolean {
+    const grid = this.gridManager['grid'];
+    if (!grid[y] || !grid[y][x] || grid[y][x] !== null) {
+      return false;
+    }
+
+    if (this.resourceManager && 
+        this.resourceManager.resources.money >= this.buildingCosts[this.selectedBuilding]) {
+      grid[y][x] = this.selectedBuilding;
+      
+      const resources = this.resourceManager.resources;
+      resources.money -= this.buildingCosts[this.selectedBuilding];
+      this.createBuildingHealth(x, y, this.selectedBuilding);
+      this.scene.events.emit('updateResources', { ...resources });
+      
+      Debug.log('Building placed successfully', {
+        category: 'building',
+        data: {
+          building: this.selectedBuilding,
+          position: { x, y },
+          cost: this.buildingCosts[this.selectedBuilding],
+          remainingMoney: resources.money
+        }
+      });
+      return true;
+    }
+
+    if (this.resourceManager?.resources.money < this.buildingCosts[this.selectedBuilding]) {
+      Debug.log('Not enough money to build', {
+        category: 'building',
+        data: {
+          building: this.selectedBuilding,
+          cost: this.buildingCosts[this.selectedBuilding],
+          available: this.resourceManager.resources.money
+        }
+      });
+    }
+    return false;
   }
 } 
