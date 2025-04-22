@@ -57,6 +57,7 @@ function App() {
       if (scene) {
         // Initialize resources from the scene
         setResources(scene.resources); // Set initial resources from the scene
+        setKillCount(scene.killCount); // Set initial kill count from the scene
         scene.setSelectedBuilding(selectedBuilding);
       }
     }

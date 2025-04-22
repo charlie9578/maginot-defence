@@ -44,9 +44,11 @@ export const BuildingSelector: React.FC<BuildingSelectorProps> = ({
   killCount
 }) => {
   const [currentResources, setCurrentResources] = useState(resources);
+  const [currentKillCount, setCurrentKillCount] = useState(killCount);
 
   useEffect(() => {
     const interval = setInterval(() => {
+      
       // Update currentResources with the latest resources
       setCurrentResources(prevResources => ({
         ...prevResources,
@@ -58,17 +60,21 @@ export const BuildingSelector: React.FC<BuildingSelectorProps> = ({
         maxTroops: resources.maxTroops,
         maxAmmo: resources.maxAmmo,
       }));
+
+      setCurrentKillCount(killCount); // Directly set the killCount value
+
     }, 1000); // Update every second
 
     return () => clearInterval(interval); // Cleanup on unmount
-  }, []); // Empty dependency array to run only once on mount
+    
+  }, [resources, killCount]); // Add killCount to the dependency array
 
 
 
   console.log('Rendering BuildingSelector with props:', {
     selectedBuilding,
     resources: currentResources, // Use updated resources
-    killCount,
+    killCount: currentKillCount,
     isWaveActive
   });
 

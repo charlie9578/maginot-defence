@@ -186,6 +186,12 @@ export class UndergroundScene extends Scene {
 
     // Initialize EnemyManager
     this.enemyManager = new EnemyManager(this, this.gridManager, this.resources);
+
+    // Add event listener for kill count update
+    this.events.on('updateKillCount', (newKillCount: number) => {
+      console.log('Kill count updated:', newKillCount);
+      // Update UI or handle logic here
+    });
   }
 
   private handleResize(gameSize: Phaser.Structs.Size) {
