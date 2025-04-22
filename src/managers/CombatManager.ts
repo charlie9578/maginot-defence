@@ -1,6 +1,6 @@
 import { Scene } from 'phaser';
 import { Debug } from '../utils/Debug';
-import { EnemyManager } from '../scenes/EnemyManager';
+import { EnemyManager } from './EnemyManager';
 import { BuildingManager } from './BuildingManager';
 import { DefenseType } from '../types/grid';
 
